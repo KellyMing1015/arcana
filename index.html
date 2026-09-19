@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f5f4f1" />
+    <title>Arcana — 为此刻抽一张牌</title>
+    <meta name="description" content="Arcana 是一段从你的真实议题出发的塔罗体验。" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="site-shell">
+      <header class="site-header">
+        <a class="wordmark" href="#settings" aria-label="打开 Arcana 模型设置" title="打开模型设置">
+          <span class="brand-symbol" aria-hidden="true">✳</span>
+          <span>ARCANA</span>
+          <small class="wordmark-settings">设置</small>
+        </a>
+        <span class="header-note">一场关于此刻的对话</span>
+        <span class="prototype-tag" id="provider-indicator">服务端默认配置</span>
+      </header>
+
+      <main id="app" aria-live="polite"></main>
+
+      <footer class="site-footer">
+        <span>ARCANA © 2026</span>
+        <span>带着问题来，带着一点清晰离开。</span>
+        <span>用心设计的塔罗体验</span>
+      </footer>
+    </div>
+    <script>
+      if (location.protocol === "file:") {
+        document.querySelector("#app").innerHTML = '<section class="ritual-screen question-screen"><div class="question-inner"><span class="eyebrow">ARCANA LOCAL PREVIEW</span><h1>请从本地服务打开 Arcana。</h1><p class="question-lead">直接打开这个 HTML 文件无法连接解读后端。先运行 Flask，再打开下面的地址。</p><p><a href="http://127.0.0.1:4173/">打开 Arcana 本地预览 →</a></p></div></section>';
+      } else {
+        const script = document.createElement("script");
+        script.type = "module";
+        script.src = "./app.js";
+        document.body.append(script);
+      }
+    </script>
+  </body>
+</html>
