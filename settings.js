@@ -97,7 +97,7 @@ function renderSettings(message = "") {
   const overlay = document.querySelector("#provider-settings");
   if (!overlay) return;
   overlay.innerHTML = `<div class="settings-page">
-    <header class="settings-header"><span class="settings-brand"><span aria-hidden="true">✳</span> ARCANA <small>/ SETTINGS</small></span><button id="close-settings" type="button">← 返回抽牌</button></header>
+    <header class="settings-header"><span class="settings-brand"><span aria-hidden="true"></span> ARCANA <small>/ SETTINGS</small></span><button id="close-settings" type="button">← 返回抽牌</button></header>
     <div class="settings-layout">
       <aside class="settings-sidebar">
         <span class="eyebrow">YOUR READING ENGINE</span>

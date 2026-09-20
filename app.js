@@ -21,8 +21,9 @@ const labels = {
 };
 const timers = new Set();
 let shuffleInterval = null;
-let cutAutoTimer = null;
 let armedAtDown = null;
+let cutListeners = null;
+let fanZones = [];
 
 function later(callback, milliseconds) {
   const id = setTimeout(() => { timers.delete(id); callback(); }, milliseconds);
@@ -37,7 +38,9 @@ function clearTimers() {
   timers.clear();
   if (shuffleInterval) clearInterval(shuffleInterval);
   shuffleInterval = null;
-  cutAutoTimer = null;
+  cutListeners?.abort();
+  cutListeners = null;
+  fanZones = [];
 }
 
 function escapeHTML(value) {
@@ -75,8 +78,8 @@ function backArt() {
 
 function renderQuestion() {
   app.innerHTML = `<section class="ritual-screen question-screen screen-enter">
-    <div class="ritual-ornament ornament-one" aria-hidden="true">✳</div>
-    <div class="ritual-ornament ornament-two" aria-hidden="true">✳</div>
+    <div class="ritual-ornament ornament-one" aria-hidden="true"></div>
+    <div class="ritual-ornament ornament-two" aria-hidden="true"></div>
     <div class="question-inner">
       <div class="eyebrow"><span class="eyebrow-line"></span> A MOMENT FOR YOUR QUESTION</div>
       <h1>此刻，<br><em>你想问什么？</em></h1>
@@ -128,7 +131,7 @@ function renderShuffle() {
       <div class="shuffle-glow" aria-hidden="true"></div>
       <div class="shuffle-pile" id="shuffle-pile">${Array.from({ length: 14 }, (_, index) => `<div class="shuffle-card ${index % 4 === 1 ? "visually-reversed" : ""}" style="--stack-x:${(index - 7) * 1.1}px;--stack-y:${(7 - index) * 1.2}px;--tilt:${(index % 5 - 2) * .5}deg;--shuffle-delay:${-index * 67}ms">${backArt()}</div>`).join("")}</div>
     </div>
-    <div class="ritual-instruction" id="shuffle-instruction"><span class="instruction-mark">↕</span><strong>按住洗牌</strong><small>按住多久，就洗多久</small></div>
+    <div class="ritual-instruction" id="shuffle-instruction"><span class="instruction-mark" aria-hidden="true"></span><strong>按住洗牌</strong><small>按住多久，就洗多久</small></div>
     <p class="ritual-question">“${escapeHTML(state.question)}”</p>
   </section>`;
   document.querySelector("#back-question").addEventListener("click", () => go("question"));
@@ -140,7 +143,7 @@ function renderShuffle() {
     state.isHolding = true;
     surface.classList.add("is-shuffling");
     pile.classList.add("is-shuffling");
-    document.querySelector("#shuffle-instruction").innerHTML = `<span class="instruction-mark">✳</span><strong>正在洗牌…</strong><small>松开手指或鼠标即可停下</small>`;
+    document.querySelector("#shuffle-instruction").innerHTML = `<span class="instruction-mark" aria-hidden="true"></span><strong>正在洗牌…</strong><small>松开手指或鼠标即可停下</small>`;
     if (event.pointerId !== undefined) surface.setPointerCapture(event.pointerId);
     shuffleInterval = setInterval(() => {
       state.deck = shuffle(state.deck);
@@ -158,7 +161,7 @@ function renderShuffle() {
     surface.classList.remove("is-shuffling");
     pile.classList.remove("is-shuffling");
     pile.classList.add("is-settling");
-    document.querySelector("#shuffle-instruction").innerHTML = `<span class="instruction-mark">✳</span><strong>洗牌完成</strong><small>牌正在收拢</small>`;
+    document.querySelector("#shuffle-instruction").innerHTML = `<span class="instruction-mark" aria-hidden="true"></span><strong>洗牌完成</strong><small>牌正在收拢</small>`;
     later(() => go("cut"), 500);
   }
   surface.addEventListener("pointerdown", start);
@@ -172,34 +175,107 @@ function renderShuffle() {
 function renderCut() {
   app.innerHTML = `<section class="ritual-screen cut-screen screen-enter">
     <div class="ritual-top"><button class="ritual-back" id="reshuffle-top">← 重新洗牌</button><span>02 / 04 — 切牌</span></div>
-    <div class="ritual-heading"><span class="eyebrow">A SMALL CHANGE IN THE ORDER</span><h1>轮到你切牌。</h1><p id="cut-description">点击切牌。你可以重复切牌，停下后牌面会自动展开。</p></div>
-    <div class="cut-stage"><div class="cut-halo" aria-hidden="true"></div><div class="cut-pile" id="cut-pile"><div class="cut-half cut-bottom">${backArt()}</div><div class="cut-half cut-top">${backArt()}</div></div></div>
-    <div class="cut-actions"><button class="ritual-primary cut-button" type="button" id="cut-button">切牌 <span aria-hidden="true">↗</span></button><button class="ritual-secondary" type="button" id="reshuffle">重新洗牌</button></div>
+    <div class="ritual-heading"><span class="eyebrow">A SMALL CHANGE IN THE ORDER</span><h1>轮到你切牌。</h1><p id="cut-description">在牌堆上向左或向右滑动。你可以按自己的节奏多切几次。</p></div>
+    <div class="cut-stage"><div class="cut-halo" aria-hidden="true"></div><div class="cut-pile" id="cut-pile" role="button" tabindex="0" aria-label="向左或向右拖动切牌，键盘可用左右方向键切牌"><div class="cut-half cut-bottom">${backArt()}</div><div class="cut-half cut-top">${backArt()}</div></div></div>
+    <div class="cut-actions"><button class="ritual-primary cut-button" type="button" id="cut-done" hidden>完成 <span aria-hidden="true">↗</span></button><button class="ritual-secondary" type="button" id="reshuffle">重新洗牌</button></div>
     <p class="cut-count" id="cut-count">尚未切牌</p>
   </section>`;
   document.querySelector("#reshuffle-top").addEventListener("click", () => go("shuffle"));
   document.querySelector("#reshuffle").addEventListener("click", () => go("shuffle"));
-  const cutButton = document.querySelector("#cut-button");
   const pile = document.querySelector("#cut-pile");
-  cutButton.addEventListener("click", () => {
-    if (pile.classList.contains("is-cutting")) return;
-    if (cutAutoTimer) { clearTimeout(cutAutoTimer); timers.delete(cutAutoTimer); cutAutoTimer = null; }
+  const done = document.querySelector("#cut-done");
+  const controller = new AbortController();
+  cutListeners = controller;
+  const options = { signal: controller.signal };
+  let gesture = null;
+  let lastTouch = 0;
+  let cutting = false;
+
+  function finishCut(direction, releaseX) {
+    if (cutting) return;
+    cutting = true;
     const position = 1 + Math.floor(Math.random() * 77);
     state.deck = [...state.deck.slice(position), ...state.deck.slice(0, position)];
     state.cutCount += 1;
-    pile.classList.remove("is-cutting");
+    pile.style.setProperty("--release-x", `${releaseX}px`);
+    pile.style.setProperty("--cut-x", `${direction * 190}px`);
+    pile.style.setProperty("--cut-tilt", `${direction * 4}deg`);
+    pile.style.setProperty("--drag-x", "0px");
     pile.classList.add("is-cutting");
-    cutButton.disabled = true;
-    cutButton.firstChild.textContent = "正在切牌 ";
     document.querySelector("#cut-count").textContent = `已切 ${state.cutCount} 次`;
     later(() => {
+      if (state.stage !== "cut") return;
       pile.classList.remove("is-cutting");
-      cutButton.disabled = false;
-      cutButton.firstChild.textContent = "继续切牌 ";
-      document.querySelector("#cut-description").textContent = "想再切一次就点击。停下约两秒，牌面会自动展开。";
-      cutAutoTimer = later(() => go("fan"), 2200);
+      cutting = false;
+      done.hidden = false;
+      document.querySelector("#cut-description").textContent = "切牌完成。可以继续滑动，或点击完成开始抽牌。";
     }, 1000);
-  });
+  }
+
+  function start(x, y, kind, identifier = null) {
+    if (cutting || gesture || state.stage !== "cut") return;
+    gesture = { x, y, kind, identifier, dx: 0, horizontal: false };
+    pile.classList.add("is-dragging");
+  }
+  function move(x, y) {
+    if (!gesture || cutting) return;
+    const dx = x - gesture.x;
+    const dy = y - gesture.y;
+    if (!gesture.horizontal && Math.abs(dy) > Math.abs(dx) + 12) return;
+    gesture.horizontal = true;
+    gesture.dx = Math.max(-180, Math.min(180, dx));
+    pile.style.setProperty("--drag-x", `${gesture.dx}px`);
+  }
+  function end(cancelled = false) {
+    if (!gesture) return;
+    const dx = gesture.dx;
+    gesture = null;
+    pile.classList.remove("is-dragging");
+    if (!cancelled && Math.abs(dx) >= 48) {
+      finishCut(Math.sign(dx), dx);
+    } else {
+      pile.style.setProperty("--drag-x", "0px");
+    }
+  }
+
+  pile.addEventListener("touchstart", (event) => {
+    if (event.touches.length !== 1) return;
+    lastTouch = Date.now();
+    const touch = event.changedTouches[0];
+    start(touch.clientX, touch.clientY, "touch", touch.identifier);
+  }, options);
+  pile.addEventListener("touchmove", (event) => {
+    if (gesture?.kind !== "touch") return;
+    const touch = Array.from(event.changedTouches).find((item) => item.identifier === gesture.identifier);
+    if (!touch) return;
+    if (Math.abs(touch.clientX - gesture.x) > Math.abs(touch.clientY - gesture.y)) event.preventDefault();
+    move(touch.clientX, touch.clientY);
+  }, { ...options, passive: false });
+  pile.addEventListener("touchend", (event) => {
+    if (gesture?.kind !== "touch") return;
+    const touch = Array.from(event.changedTouches).find((item) => item.identifier === gesture.identifier);
+    if (touch) { move(touch.clientX, touch.clientY); end(); }
+  }, options);
+  pile.addEventListener("touchcancel", () => end(true), options);
+
+  pile.addEventListener("mousedown", (event) => {
+    if (event.button !== 0 || Date.now() - lastTouch < 700) return;
+    event.preventDefault();
+    start(event.clientX, event.clientY, "mouse");
+  }, options);
+  window.addEventListener("mousemove", (event) => { if (gesture?.kind === "mouse") move(event.clientX, event.clientY); }, options);
+  window.addEventListener("mouseup", (event) => {
+    if (gesture?.kind !== "mouse") return;
+    move(event.clientX, event.clientY);
+    end();
+  }, options);
+  window.addEventListener("blur", () => end(true), options);
+  pile.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    finishCut(event.key === "ArrowLeft" ? -1 : 1, 0);
+  }, options);
+  done.addEventListener("click", () => { if (!cutting) go("fan"); }, options);
 }
 
 function fanBack(card) {
@@ -213,9 +289,9 @@ function renderFan() {
   app.innerHTML = `<section class="ritual-screen fan-screen screen-enter">
     <div class="ritual-top"><span>03 / 04 — 选牌</span><span>ARCANA · ${state.spread === 1 ? "单牌" : state.spread === 3 ? "三牌阵" : "凯尔特十字"}</span></div>
     <div class="fan-heading"><span class="eyebrow">TRUST YOUR FIRST FEELING</span><h1>选择让你停下<span class="mobile-break"><br></span>目光的牌。</h1><p id="fan-instruction">牌面正在展开…</p></div>
-    <div class="selection-tray" id="selection-tray">${labels[state.spread].map((label, index) => `<div class="tray-item"><div class="tray-slot" id="selection-slot-${index}"><span>${String(index + 1).padStart(2, "0")}</span></div><small>${label}</small></div>`).join("")}</div>
+    <div class="selection-tray selection-tray-${state.spread}" id="selection-tray">${labels[state.spread].map((label, index) => `<div class="tray-item"><div class="tray-slot" id="selection-slot-${index}"><span>${String(index + 1).padStart(2, "0")}</span></div><small>${label}</small></div>`).join("")}</div>
     <div class="fan-area" id="fan-area" tabindex="0" role="group" aria-label="78 张塔罗牌扇面。移动指针或手指选择，再点击确认。键盘可用左右方向键选择、回车确认。">
-      <div class="fan-center-mark" aria-hidden="true">✳</div>
+      <div class="fan-center-mark" aria-hidden="true"></div>
       ${state.deck.map(fanBack).join("")}
       <div class="fan-gap-info" id="fan-gap-info"><strong>请选择 ${state.spread} 张牌</strong><span>先滑过牌面，再点击确认</span></div>
     </div>
@@ -238,14 +314,14 @@ function renderFan() {
   area.addEventListener("pointerdown", (event) => {
     if (state.isOpening || state.isSelecting) return;
     event.preventDefault();
-    const card = cardAtPoint(event.clientX, event.clientY);
+    const card = cardAtPoint(event.clientX, event.clientY, true);
     armedAtDown = card && state.hoveredId === card.id ? card.id : null;
     setHover(card?.id ?? null);
     area.setPointerCapture(event.pointerId);
   });
   area.addEventListener("pointerup", (event) => {
     if (state.isOpening || state.isSelecting) return;
-    const card = cardAtPoint(event.clientX, event.clientY);
+    const card = cardAtPoint(event.clientX, event.clientY, true);
     if (card && card.id === armedAtDown && state.hoveredId === card.id) selectCard(card);
     armedAtDown = null;
   });
@@ -282,61 +358,65 @@ function fanMetrics() {
 function layoutFan(opening) {
   const remaining = getRemaining();
   const { area, radius } = fanMetrics();
-  remaining.forEach((card, index) => {
+  fanZones = remaining.map((card, index) => {
     const element = area.querySelector(`[data-card-id="${card.id}"]`);
-    if (!element) return;
     const angle = 135 + index / Math.max(remaining.length - 1, 1) * 270;
     const radians = angle * Math.PI / 180;
     const x = Math.cos(radians) * radius;
     const y = Math.sin(radians) * radius;
     const rotation = angle + 90 + (card.reversed ? 180 : 0);
-    const base = `translate(-50%, -50%) translate(${x}px, ${y}px) rotate(${rotation}deg)`;
-    const hover = `translate(-50%, -50%) translate(${x}px, ${y - 10}px) rotate(${rotation}deg) scale(1.08)`;
-    element.dataset.baseTransform = base;
-    element.dataset.hoverTransform = hover;
     element.dataset.rotation = String(rotation);
     element.style.transitionDelay = opening ? `${index * 9}ms` : "0ms";
-    element.style.zIndex = card.id === state.hoveredId ? "200" : String(index + 1);
-    element.style.transform = card.id === state.hoveredId ? hover : base;
     element.style.opacity = "1";
+    return { card, element, index, radians, rotation, rotationSin: Math.sin(rotation * Math.PI / 180), rotationCos: Math.cos(rotation * Math.PI / 180), baseX: x, baseY: y, width: element.offsetWidth, height: element.offsetHeight };
   });
+  applyFanFocus();
 }
 
-function cardAtPoint(clientX, clientY) {
-  const remaining = getRemaining();
-  if (!remaining.length) return null;
-  const { area, radius, cx, cy } = fanMetrics();
+function cardAtPoint(clientX, clientY, preferHovered = false) {
+  if (!fanZones.length) return null;
+  const { area, cx, cy } = fanMetrics();
   const bounds = area.getBoundingClientRect();
-  const dx = clientX - bounds.left - cx;
-  const dy = clientY - bounds.top - cy;
-  const distance = Math.hypot(dx, dy);
-  const tolerance = matchMedia("(max-width: 560px)").matches ? 50 : 66;
-  if (distance < radius - tolerance || distance > radius + tolerance) return null;
-  let angle = Math.atan2(dy, dx) * 180 / Math.PI;
-  if (angle < 0) angle += 360;
-  if (angle > 45 && angle < 135) return null;
-  if (angle < 135) angle += 360;
-  const position = Math.max(0, Math.min(remaining.length - 1, Math.round((angle - 135) / 270 * (remaining.length - 1))));
-  return remaining[position];
+  const x = clientX - bounds.left - cx;
+  const y = clientY - bounds.top - cy;
+  let nearest = null;
+  let nearestDistance = Infinity;
+  for (const zone of fanZones) {
+    const dx = x - zone.x;
+    const dy = y - zone.y;
+    const localX = dx * zone.rotationCos + dy * zone.rotationSin;
+    const localY = -dx * zone.rotationSin + dy * zone.rotationCos;
+    const margin = 2;
+    if (Math.abs(localX) > zone.width * zone.scale / 2 + margin || Math.abs(localY) > zone.height * zone.scale / 2 + margin) continue;
+    if (preferHovered && zone.card.id === state.hoveredId) return zone.card;
+    const baseDx = x - zone.baseX;
+    const baseDy = y - zone.baseY;
+    const distance = baseDx * baseDx + baseDy * baseDy;
+    if (distance < nearestDistance) { nearest = zone.card; nearestDistance = distance; }
+  }
+  return nearest;
+}
+
+function applyFanFocus() {
+  const focused = fanZones.findIndex((zone) => zone.card.id === state.hoveredId);
+  for (const zone of fanZones) {
+    const gap = zone.index - focused;
+    const distance = Math.abs(gap);
+    const isFocused = focused >= 0 && gap === 0;
+    const spacing = focused >= 0 && distance > 0 && distance <= 3 ? Math.sign(gap) * [0, 24, 14, 6][distance] : 0;
+    zone.x = zone.baseX - Math.sin(zone.radians) * spacing;
+    zone.y = zone.baseY + Math.cos(zone.radians) * spacing - (isFocused ? 18 : 0);
+    zone.scale = isFocused ? 1.24 : 1;
+    zone.element.classList.toggle("is-hovered", isFocused);
+    zone.element.style.zIndex = isFocused ? "200" : String(zone.index + 1);
+    zone.element.style.transform = `translate(-50%, -50%) translate(${zone.x}px, ${zone.y}px) rotate(${zone.rotation}deg) scale(${zone.scale})`;
+  }
 }
 
 function setHover(id) {
   if (state.hoveredId === id) return;
-  const area = document.querySelector("#fan-area");
-  const previous = area.querySelector(`[data-card-id="${state.hoveredId}"]`);
-  if (previous) {
-    previous.classList.remove("is-hovered");
-    previous.style.transform = previous.dataset.baseTransform;
-    previous.style.zIndex = previous.dataset.originalZ || previous.style.zIndex;
-  }
   state.hoveredId = id;
-  const next = id ? area.querySelector(`[data-card-id="${id}"]`) : null;
-  if (next) {
-    next.dataset.originalZ = next.style.zIndex;
-    next.classList.add("is-hovered");
-    next.style.transform = next.dataset.hoverTransform;
-    next.style.zIndex = "200";
-  }
+  applyFanFocus();
 }
 
 async function selectCard(card) {
