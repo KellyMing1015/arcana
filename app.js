@@ -13,11 +13,20 @@ const state = {
   isSelecting: false,
   isHolding: false,
   cutCount: 0,
+  framework: null,
 };
 const labels = {
   1: ["此刻"],
-  3: ["过去", "现在", "未来"],
+  3: ["第1张", "第2张", "第3张"],
   10: ["现状", "交叉影响", "潜意识", "过去", "意识", "近期", "自我", "环境", "希望与恐惧", "可能走向"],
+};
+const threeCardFrameworks = {
+  timeline: ["过去", "现在", "未来"],
+  cause: ["问题", "原因", "建议"],
+  outcome: ["现状", "阻碍", "结果"],
+  relationship: ["对方想法", "感受", "行动"],
+  choice: ["选择A", "选择B", "建议"],
+  energy: ["整体能量", "关键影响", "建议"],
 };
 const timers = new Set();
 let shuffleInterval = null;
@@ -58,6 +67,10 @@ function shuffle(items) {
   return result;
 }
 
+function positionLabels() {
+  return state.spread === 3 && state.framework ? threeCardFrameworks[state.framework] : labels[state.spread];
+}
+
 function go(stage) {
   clearTimers();
   state.stage = stage;
@@ -88,9 +101,9 @@ function renderQuestion() {
         <label class="sr-only" for="question">想问的问题</label>
         <textarea id="question" rows="3" maxlength="220" placeholder="我想聊聊……" required>${escapeHTML(state.question)}</textarea>
         <fieldset class="ritual-spreads"><legend>选择牌阵</legend>
-          <button type="button" data-spread="1" class="ritual-spread ${state.spread === 1 ? "active" : ""}" aria-pressed="${state.spread === 1}"><span>01</span><strong>单牌</strong><small>一张牌的提示</small></button>
-          <button type="button" data-spread="3" class="ritual-spread ${state.spread === 3 ? "active" : ""}" aria-pressed="${state.spread === 3}"><span>03</span><strong>三牌阵</strong><small>过去 · 现在 · 未来</small></button>
-          <button type="button" data-spread="10" class="ritual-spread ${state.spread === 10 ? "active" : ""}" aria-pressed="${state.spread === 10}"><span>10</span><strong>凯尔特十字</strong><small>深入展开议题</small></button>
+          <button type="button" data-spread="1" class="ritual-spread ${state.spread === 1 ? "active" : ""}" aria-pressed="${state.spread === 1}"><strong>单牌</strong></button>
+          <button type="button" data-spread="3" class="ritual-spread ${state.spread === 3 ? "active" : ""}" aria-pressed="${state.spread === 3}"><strong>三牌阵</strong></button>
+          <button type="button" data-spread="10" class="ritual-spread ${state.spread === 10 ? "active" : ""}" aria-pressed="${state.spread === 10}"><strong>凯尔特十字</strong></button>
         </fieldset>
         <button class="ritual-primary" type="submit">开始 <span aria-hidden="true">↗</span></button>
       </form>
@@ -118,6 +131,7 @@ function renderQuestion() {
     state.selected = [];
     state.cutCount = 0;
     state.hoveredId = null;
+    state.framework = null;
     go("shuffle");
   });
 }
@@ -126,50 +140,87 @@ function renderShuffle() {
   state.isHolding = false;
   app.innerHTML = `<section class="ritual-screen shuffle-screen screen-enter">
     <div class="ritual-top"><button class="ritual-back" id="back-question">← 返回提问</button><span>01 / 04 — 洗牌</span></div>
-    <div class="ritual-heading"><span class="eyebrow">THE CARDS ARE IN YOUR HANDS</span><h1>把注意力放在你的问题上。</h1><p>按住牌堆洗牌，松开时停下。你可以按自己的节奏来。</p></div>
-    <div class="shuffle-surface" id="shuffle-surface" tabindex="0" role="button" aria-label="按住鼠标或手指持续洗牌，松开后进入切牌">
+    <div class="ritual-heading"><span class="eyebrow">THE CARDS ARE IN YOUR HANDS</span><h1>把注意力放在你的问题上。</h1><p>按住牌面至少半秒开始洗牌，松开时停下。</p></div>
+    <div class="shuffle-surface" id="shuffle-surface">
       <div class="shuffle-glow" aria-hidden="true"></div>
-      <div class="shuffle-pile" id="shuffle-pile">${Array.from({ length: 14 }, (_, index) => `<div class="shuffle-card ${index % 4 === 1 ? "visually-reversed" : ""}" style="--stack-x:${(index - 7) * 1.1}px;--stack-y:${(7 - index) * 1.2}px;--tilt:${(index % 5 - 2) * .5}deg;--shuffle-delay:${-index * 67}ms">${backArt()}</div>`).join("")}</div>
+      <div class="shuffle-pile" id="shuffle-pile" tabindex="0" role="button" aria-label="按住牌面至少半秒开始洗牌，松开后进入切牌">${Array.from({ length: 14 }, (_, index) => `<div class="shuffle-card ${index % 4 === 1 ? "visually-reversed" : ""}" style="--stack-x:${(index - 7) * 1.1}px;--stack-y:${(7 - index) * 1.2}px;--tilt:${(index % 5 - 2) * .5}deg;--shuffle-delay:${-index * 67}ms">${backArt()}</div>`).join("")}</div>
     </div>
-    <div class="ritual-instruction" id="shuffle-instruction"><span class="instruction-mark" aria-hidden="true"></span><strong>按住洗牌</strong><small>按住多久，就洗多久</small></div>
+    <div class="ritual-instruction" id="shuffle-instruction"><span class="instruction-mark" aria-hidden="true"></span><strong>按住牌面洗牌</strong><small>长按半秒开始，轻触不会洗牌</small></div>
     <p class="ritual-question">“${escapeHTML(state.question)}”</p>
   </section>`;
   document.querySelector("#back-question").addEventListener("click", () => go("question"));
-  const surface = document.querySelector("#shuffle-surface");
   const pile = document.querySelector("#shuffle-pile");
-  function start(event) {
-    if (state.isHolding || state.stage !== "shuffle") return;
-    event.preventDefault();
+  let holdTimer = null;
+  let activePointer = null;
+  let keyPending = false;
+
+  function beginShuffle() {
+    holdTimer = null;
+    if (state.stage !== "shuffle" || state.isHolding) return;
     state.isHolding = true;
-    surface.classList.add("is-shuffling");
+    pile.classList.remove("is-pressing");
     pile.classList.add("is-shuffling");
     document.querySelector("#shuffle-instruction").innerHTML = `<span class="instruction-mark" aria-hidden="true"></span><strong>正在洗牌…</strong><small>松开手指或鼠标即可停下</small>`;
-    if (event.pointerId !== undefined) surface.setPointerCapture(event.pointerId);
     shuffleInterval = setInterval(() => {
       state.deck = shuffle(state.deck);
       const cards = pile.querySelectorAll(".shuffle-card");
       for (let i = 0; i < 3; i += 1) cards[Math.floor(Math.random() * cards.length)].classList.toggle("visually-reversed");
     }, 260);
   }
-  function stop(event) {
+  function cancelPending() {
+    if (holdTimer !== null) {
+      clearTimeout(holdTimer);
+      timers.delete(holdTimer);
+      holdTimer = null;
+    }
+    pile.classList.remove("is-pressing");
+  }
+  function finishShuffle() {
     if (!state.isHolding || state.stage !== "shuffle") return;
-    event.preventDefault();
     state.isHolding = false;
     if (shuffleInterval) clearInterval(shuffleInterval);
     shuffleInterval = null;
     state.deck = shuffle(state.deck).map((card) => ({ ...card, reversed: Math.random() < .28 }));
-    surface.classList.remove("is-shuffling");
     pile.classList.remove("is-shuffling");
     pile.classList.add("is-settling");
     document.querySelector("#shuffle-instruction").innerHTML = `<span class="instruction-mark" aria-hidden="true"></span><strong>洗牌完成</strong><small>牌正在收拢</small>`;
     later(() => go("cut"), 500);
   }
-  surface.addEventListener("pointerdown", start);
-  surface.addEventListener("pointerup", stop);
-  surface.addEventListener("pointercancel", stop);
-  surface.addEventListener("contextmenu", (event) => event.preventDefault());
-  surface.addEventListener("keydown", (event) => { if (event.code === "Space") start(event); });
-  surface.addEventListener("keyup", (event) => { if (event.code === "Space") stop(event); });
+  pile.addEventListener("pointerdown", (event) => {
+    if (activePointer || keyPending || state.isHolding || event.button !== 0 || !event.target.closest(".shuffle-card")) return;
+    event.preventDefault();
+    activePointer = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    pile.setPointerCapture(event.pointerId);
+    pile.classList.add("is-pressing");
+    holdTimer = later(beginShuffle, 500);
+  });
+  pile.addEventListener("pointermove", (event) => {
+    if (holdTimer === null || activePointer?.id !== event.pointerId) return;
+    if (Math.hypot(event.clientX - activePointer.x, event.clientY - activePointer.y) > 24) cancelPending();
+  });
+  function releasePointer(event) {
+    if (activePointer?.id !== event.pointerId) return;
+    activePointer = null;
+    if (holdTimer !== null) cancelPending();
+    else finishShuffle();
+  }
+  pile.addEventListener("pointerup", releasePointer);
+  pile.addEventListener("pointercancel", releasePointer);
+  pile.addEventListener("contextmenu", (event) => event.preventDefault());
+  pile.addEventListener("keydown", (event) => {
+    if (event.code !== "Space" || event.repeat || keyPending || activePointer || state.isHolding) return;
+    event.preventDefault();
+    keyPending = true;
+    pile.classList.add("is-pressing");
+    holdTimer = later(beginShuffle, 500);
+  });
+  pile.addEventListener("keyup", (event) => {
+    if (event.code !== "Space" || !keyPending) return;
+    event.preventDefault();
+    keyPending = false;
+    if (holdTimer !== null) cancelPending();
+    else finishShuffle();
+  });
 }
 
 function renderCut() {
@@ -289,7 +340,7 @@ function renderFan() {
   app.innerHTML = `<section class="ritual-screen fan-screen screen-enter">
     <div class="ritual-top"><span>03 / 04 — 选牌</span><span>ARCANA · ${state.spread === 1 ? "单牌" : state.spread === 3 ? "三牌阵" : "凯尔特十字"}</span></div>
     <div class="fan-heading"><span class="eyebrow">TRUST YOUR FIRST FEELING</span><h1>选择让你停下<span class="mobile-break"><br></span>目光的牌。</h1><p id="fan-instruction">牌面正在展开…</p></div>
-    <div class="selection-tray selection-tray-${state.spread}" id="selection-tray">${labels[state.spread].map((label, index) => `<div class="tray-item"><div class="tray-slot" id="selection-slot-${index}"><span>${String(index + 1).padStart(2, "0")}</span></div><small>${label}</small></div>`).join("")}</div>
+    <div class="selection-tray selection-tray-${state.spread}" id="selection-tray">${positionLabels().map((label, index) => `<div class="tray-item"><div class="tray-slot" id="selection-slot-${index}"><span>${String(index + 1).padStart(2, "0")}</span></div><small>${label}</small></div>`).join("")}</div>
     <div class="fan-area" id="fan-area" tabindex="0" role="group" aria-label="78 张塔罗牌扇面。移动指针或手指选择，再点击确认。键盘可用左右方向键选择、回车确认。">
       <div class="fan-center-mark" aria-hidden="true"></div>
       ${state.deck.map(fanBack).join("")}
@@ -474,7 +525,7 @@ function resultCard(card, index) {
   const rotation = (card.reversed ? 180 : 0) + (crossed ? 90 : 0);
   return `<article class="result-card result-card-${index + 1}" style="--card-rotation:${rotation}deg;--reveal-delay:${index * 70}ms">
     <div class="result-card-visual">${cardFace(card)}</div>
-    <div class="result-card-label"><span>${labels[state.spread][index]}</span><strong>${card.chinese}</strong><small>${card.reversed ? "逆位" : "正位"}</small></div>
+    <div class="result-card-label"><span>${positionLabels()[index]}</span><strong>${card.chinese}</strong><small>${card.reversed ? "逆位" : "正位"}</small></div>
   </article>`;
 }
 
@@ -512,7 +563,7 @@ async function fetchReading(output) {
       cards: state.selected.map((card, index) => ({
         id: card.id,
         name: `${card.chinese}（${card.english}）`,
-        position: labels[state.spread][index],
+        position: positionLabels()[index],
         reversed: card.reversed,
       })),
       ...(provider ? { provider } : {}),
@@ -563,6 +614,13 @@ async function fetchReading(output) {
     try { payload = JSON.parse(data); }
     catch { throw new Error("解读流的数据格式不正确。"); }
     if (payload.error) throw new Error(payload.error);
+    if (payload.framework && state.spread === 3) {
+      if (!threeCardFrameworks[payload.framework]) throw new Error("模型返回了无法识别的三牌框架。");
+      state.framework = payload.framework;
+      document.querySelectorAll(".result-card-label > span").forEach((element, index) => {
+        element.textContent = threeCardFrameworks[payload.framework][index];
+      });
+    }
     if (typeof payload.content === "string") queueText(payload.content);
     if (payload.done === true) {
       done = true;
@@ -619,6 +677,12 @@ function renderResult() {
       state.question = "";
       go("question");
       return;
+    }
+    if (state.spread === 3) {
+      state.framework = null;
+      document.querySelectorAll(".result-card-label > span").forEach((element, index) => {
+        element.textContent = labels[3][index];
+      });
     }
     button.disabled = true;
     button.firstChild.textContent = "解读中... ";

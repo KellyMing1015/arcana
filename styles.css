@@ -56,12 +56,11 @@ button:focus-visible, textarea:focus-visible, a:focus-visible, [tabindex]:focus-
 .ritual-question-form textarea:focus { outline: none; border-color: #9179b2; box-shadow: 0 0 0 3px #b3a0d333; }
 .ritual-spreads { margin: 25px 0 20px; padding: 0; border: 0; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 9px; text-align: left; }
 .ritual-spreads legend { width: 100%; margin-bottom: 12px; color: #676861; font-size: 11px; font-weight: 700; letter-spacing: .1em; }
-.ritual-spread { min-height: 91px; padding: 11px 14px; border: 1px solid #d2d0ca; border-radius: 2px; background: transparent; display: flex; flex-direction: column; align-items: flex-start; text-align: left; transition: background .2s,border-color .2s; }
+.ritual-spread { min-height: 72px; padding: 11px 14px; border: 1px solid #d2d0ca; border-radius: 2px; background: transparent; display: flex; align-items: center; justify-content: center; text-align: center; transition: background .2s,border-color .2s; }
 .ritual-spread:hover { border-color: #908d86; }
 .ritual-spread.active { border-color: #232421; background: #ecebe6; }
 .ritual-spread > span { color: #9e9f99; font-family: var(--serif); font-size: 11px; }
-.ritual-spread strong { display: block; margin-top: 6px; color: #242521; font-size: 13px; font-weight: 600; }
-.ritual-spread small { display: block; margin-top: 4px; color: #777872; font-size: 10px; }
+.ritual-spread strong { display: block; color: #242521; font-size: 13px; font-weight: 600; }
 .ritual-primary { width: 100%; min-height: 52px; padding: 0 19px; border: 1px solid var(--ink); border-radius: 2px; background: var(--ink); color: white; display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 700; letter-spacing: .1em; transition: background .2s,transform .2s; }
 .ritual-primary:hover:not(:disabled) { background: #35363a; transform: translateY(-2px); }
 .ritual-primary span { font-size: 20px; font-weight: 400; }
@@ -74,11 +73,11 @@ button:focus-visible, textarea:focus-visible, a:focus-visible, [tabindex]:focus-
 .ornament-two { right: 13%; bottom: 12%; width: 10px; height: 10px; }
 
 /* 2. 洗牌期间只改变 transform，松开后统一收回。 */
-.shuffle-surface { position: relative; width: min(100%,700px); height: 390px; margin: 20px auto 0; touch-action: none; user-select: none; cursor: grab; }
-.shuffle-surface:active { cursor: grabbing; }
+.shuffle-surface { position: relative; width: min(100%,700px); height: 390px; margin: 20px auto 0; user-select: none; }
 .shuffle-glow { position: absolute; top: 50%; left: 50%; width: 460px; height: 460px; border: 1px solid #dfddd7; border-radius: 50%; transform: translate(-50%,-50%); pointer-events: none; }
 .shuffle-glow::after { content: ""; position: absolute; inset: 58px; border: 1px solid #e4e2dd; border-radius: 50%; }
-.shuffle-pile { position: absolute; inset: 0; }
+.shuffle-pile { position: absolute; top: 50%; left: 50%; width: 190px; height: 285px; transform: translate(-50%,-50%); touch-action: none; user-select: none; cursor: grab; }
+.shuffle-pile.is-pressing,.shuffle-pile.is-shuffling { cursor: grabbing; }
 .shuffle-card { position: absolute; top: 50%; left: 50%; width: 168px; aspect-ratio: 180/270; border: 1px solid #292b2e; border-radius: 7px; background: #101114; color: #adc5af; box-shadow: 0 11px 21px #11121625; transform: translate(-50%,-50%) translate(var(--stack-x,0px),var(--stack-y,0px)) rotate(var(--tilt,0deg)); transition: transform .5s ease-out; will-change: transform; }
 .shuffle-card .back-ornament { transition: transform .23s; }
 .shuffle-card.visually-reversed .back-ornament { transform: rotate(180deg); }
@@ -305,9 +304,8 @@ button:focus-visible, textarea:focus-visible, a:focus-visible, [tabindex]:focus-
   .ritual-question-form { margin-top: 31px; }
   .ritual-question-form textarea { min-height: 113px; padding: 18px; font-size: 15px; }
   .ritual-spreads { gap: 6px; }
-  .ritual-spread { min-height: 95px; padding: 9px 7px; }
+  .ritual-spread { min-height: 69px; padding: 9px 7px; }
   .ritual-spread strong { font-size: 12px; }
-  .ritual-spread small { font-size: 9px; line-height: 1.35; }
   .question-deco { display: none; }
   .ritual-ornament { display: none; }
   .ritual-primary > span[aria-hidden="true"] { display: none; }
@@ -315,6 +313,7 @@ button:focus-visible, textarea:focus-visible, a:focus-visible, [tabindex]:focus-
   .ritual-heading h1 { font-size: 44px; }
   .ritual-heading p { max-width: 310px; font-size: 12px; }
   .shuffle-surface { height: 350px; margin-top: 11px; }
+  .shuffle-pile { width: 158px; height: 230px; }
   .shuffle-glow,.cut-halo { width: 370px; height: 370px; }
   .shuffle-card,.cut-half { width: 136px; }
   .cut-stage { height: 350px; margin-top: 8px; }
