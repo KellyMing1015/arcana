@@ -1,17 +1,19 @@
 """Download the 78 public-domain Geldard/RWS cards from Wikimedia Commons.
 
-Requires only Python 3 and macOS's built-in sips. The 960px-wide Wikimedia
-thumbnails are converted to quality-90 JPEGs for practical web delivery.
+Uses Pillow from requirements.txt. The 960px-wide Wikimedia thumbnails are
+converted to quality-80 WebP files for practical web delivery.
 """
 
 import json
-import subprocess
+import io
 import tempfile
 import time
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -82,21 +84,16 @@ def image_info(titles):
 
 
 def save_card(card_id, title, info):
-    target = OUTPUT / f"{card_id}.jpg"
+    target = OUTPUT / f"{card_id}.webp"
     if target.is_file() and target.stat().st_size > 100_000:
         return
     image = get_bytes(info["thumburl"])
     if not image.startswith(b"\x89PNG\r\n\x1a\n"):
         raise RuntimeError(f"Unexpected image data for {title}")
     with tempfile.TemporaryDirectory(prefix="arcana-card-") as temp:
-        original = Path(temp) / "source.png"
-        converted = Path(temp) / "card.jpg"
-        original.write_bytes(image)
-        subprocess.run(
-            ["sips", "-s", "format", "jpeg", "-s", "formatOptions", "90",
-             str(original), "--out", str(converted)],
-            check=True, stdout=subprocess.DEVNULL,
-        )
+        converted = Path(temp) / "card.webp"
+        with Image.open(io.BytesIO(image)) as original:
+            original.save(converted, "WEBP", quality=80, method=6)
         if converted.stat().st_size < 100_000:
             raise RuntimeError(f"Converted image too small: {title}")
         converted.replace(target)
@@ -118,7 +115,7 @@ def main():
             future.result()
             print(f"{number}/78 {futures[future]}", flush=True)
     manifest = {
-        card_id: {"file": f"{card_id}.jpg", "source": info[title]["descriptionurl"]}
+        card_id: {"file": f"{card_id}.webp", "source": info[title]["descriptionurl"]}
         for card_id, title in titles.items()
     }
     (OUTPUT / "sources.json").write_text(

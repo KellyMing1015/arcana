@@ -49,7 +49,7 @@ def home():
 
 @app.get("/assets/cards/<filename>")
 def card_image(filename):
-    if not filename.endswith(".jpg") or not filename.removesuffix(".jpg").replace("-", "").isalnum():
+    if not filename.endswith(".webp") or not filename.removesuffix(".webp").replace("-", "").isalnum():
         return jsonify(error="牌面图片不存在。"), 404
     return send_from_directory(ROOT / "assets" / "cards", filename)
 
