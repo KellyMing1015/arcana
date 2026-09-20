@@ -32,23 +32,53 @@ class ReadingTests(unittest.TestCase):
             sent_messages.extend(messages)
             self.assertIsNone(provider)
             events = (
-                'data: {"choices":[{"delta":{"content":"我看到"}}]}\n\n'
+                'data: {"choices":[{"delta":{"content":"ARCANA_"}}]}\n\n'
+                'data: {"choices":[{"delta":{"content":"FRAMEWORK:cause\\n我看到"}}]}\n\n'
                 'data: {"choices":[{"delta":{"content":"你的犹豫"}}]}\n\n'
                 'data: [DONE]\n\n'
             )
             return io.BytesIO(events.encode("utf-8"))
 
-        with patch.object(website, "open_chat_stream", side_effect=fake_upstream):
+        with patch.object(website, "open_chat_stream", side_effect=fake_upstream) as upstream:
             response = self.client.post("/api/reading", json=self.payload, buffered=True)
 
         self.assertEqual(response.status_code, 200)
+        upstream.assert_called_once()
         self.assertIn("text/event-stream", response.content_type)
         events = [json.loads(line[6:]) for line in response.get_data(as_text=True).splitlines() if line.startswith("data: ")]
-        self.assertEqual(events, [{"content": "我看到"}, {"content": "你的犹豫"}, {"done": True}])
+        self.assertEqual(events, [
+            {"framework": "cause", "positions": ["问题", "原因", "建议"]},
+            {"content": "我看到"}, {"content": "你的犹豫"}, {"done": True},
+        ])
         self.assertEqual(sent_messages[0]["role"], "system")
+        self.assertIn("ARCANA_FRAMEWORK", sent_messages[0]["content"])
         user_prompt = sent_messages[1]["content"]
-        for text in ("我该如何看待这段关系？", "过去：愚者（THE FOOL）（正位）", "现在：月亮（THE MOON）（逆位）", "未来：星星（THE STAR）（正位）"):
+        for text in ("我该如何看待这段关系？", "第1张：愚者（THE FOOL）（正位）", "第2张：月亮（THE MOON）（逆位）", "第3张：星星（THE STAR）（正位）"):
             self.assertIn(text, user_prompt)
+
+    def test_unknown_framework_uses_default_without_showing_marker(self):
+        stream = io.BytesIO(
+            b'data: {"choices":[{"delta":{"content":"ARCANA_FRAMEWORK:unknown\\nRead the cards."}}]}\n\n'
+            b'data: [DONE]\n\n'
+        )
+        with patch.object(website, "open_chat_stream", return_value=stream):
+            response = self.client.post("/api/reading", json=self.payload, buffered=True)
+        events = [json.loads(line[6:]) for line in response.get_data(as_text=True).splitlines() if line.startswith("data: ")]
+        self.assertEqual(events[0], {"framework": "timeline", "positions": ["过去", "现在", "未来"]})
+        self.assertEqual(events[1], {"content": "Read the cards."})
+
+    def test_six_frameworks_keep_their_three_positions(self):
+        for key, positions in website.THREE_CARD_FRAMEWORKS.items():
+            with self.subTest(framework=key):
+                events = list(website.iter_reading_events([f"ARCANA_FRAMEWORK:{key}\n解读"], 3))
+                self.assertEqual(events, [
+                    {"framework": key, "positions": positions},
+                    {"content": "解读"},
+                ])
+
+    def test_incomplete_marker_is_not_shown_as_reading(self):
+        events = list(website.iter_reading_events(["ARCANA_FRAMEWORK:cause"], 3))
+        self.assertEqual(events, [{"framework": "cause", "positions": ["问题", "原因", "建议"]}])
 
     def test_selected_page_provider_reaches_relay(self):
         provider = {"baseUrl": "https://relay.example/v1", "apiKey": "key", "model": "model"}

@@ -1,6 +1,6 @@
 # Arcana
 
-一个网页塔罗抽牌与 AI 解读原型。你可以提问、洗牌、切牌、抽取单牌或牌阵，随后阅读逐字出现的解读。对话和记忆功能尚未接入。
+一个网页塔罗抽牌与 AI 解读原型。你可以提问、长按牌面洗牌、滑动切牌、抽取单牌或牌阵，随后阅读逐字出现的解读。对话和记忆功能尚未接入。
 
 ## 首次运行
 
@@ -45,4 +45,4 @@ LLM_MODEL=中转站支持的模型名
 - `llm.py`：向 OpenAI 兼容格式的中转站发起请求；密钥只保存在后端环境变量中。
 - `prompts/system.md`：解读师的语气和解读原则。
 
-`POST /api/models` 使用供应商的 `/models` 接口拉取模型名。`POST /api/reading` 接收 `question`、`spread`、`cards`，以及可选的 `provider`。每张牌包含 `id`、`name`、`reversed`。解读返回 SSE 流：`{"content":"..."}`，结束时返回 `{"done":true}`；请求开始前的错误返回 `{"error":"具体原因"}`。若流已经开始，后续错误会作为同样结构的 SSE 消息返回。
+`POST /api/models` 使用供应商的 `/models` 接口拉取模型名。`POST /api/reading` 接收 `question`、`spread`、`cards`，以及可选的 `provider`。每张牌包含 `id`、`name`、`reversed`。三牌阵只调用一次模型：模型先选择六种解读框架之一，SSE 首先返回 `{"framework":"cause","positions":["问题","原因","建议"]}`，前端据此更新牌位标题，再接收 `{"content":"..."}` 逐字显示解读。结束时返回 `{"done":true}`；请求开始前的错误返回 `{"error":"具体原因"}`。若流已经开始，后续错误会作为同样结构的 SSE 消息返回。

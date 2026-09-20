@@ -1,6 +1,7 @@
 """Arcana 网页与流式塔罗解读 API。"""
 
 import json
+import re
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -14,9 +15,18 @@ load_dotenv(ROOT / ".env")
 SYSTEM_PROMPT = (ROOT / "prompts" / "system.md").read_text(encoding="utf-8").strip()
 POSITIONS = {
     1: ["此刻"],
-    3: ["过去", "现在", "未来"],
+    3: ["第1张", "第2张", "第3张"],
     10: ["现状", "交叉影响", "潜意识", "过去", "意识", "近期", "自我", "环境", "希望与恐惧", "可能走向"],
 }
+THREE_CARD_FRAMEWORKS = {
+    "timeline": ["过去", "现在", "未来"],
+    "cause": ["问题", "原因", "建议"],
+    "outcome": ["现状", "阻碍", "结果"],
+    "relationship": ["对方想法", "感受", "行动"],
+    "choice": ["选择A", "选择B", "建议"],
+    "energy": ["整体能量", "关键影响", "建议"],
+}
+DEFAULT_FRAMEWORK = "timeline"
 PUBLIC_FILES = {"index.html", "app.js", "cards.js", "settings.js", "styles.css"}
 DEV_ORIGINS = {"http://127.0.0.1:4173", "http://localhost:4173"}
 
@@ -111,6 +121,8 @@ def build_messages(question, spread, cards):
         f"{index}. {card['position']}：{card['name']}（{card['orientation']}）"
         for index, card in enumerate(cards, start=1)
     )
+    if spread == 3:
+        lines.append("请先根据问题类型在六种三牌框架中选最合适的一种，按系统要求输出框架标记，再按选定位置解读这三张牌。")
     lines.append("请只根据这个问题和这些实际抽到的牌解读，不要加入未抽到的牌。")
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -120,6 +132,43 @@ def build_messages(question, spread, cards):
 
 def sse(payload):
     return "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
+
+
+def iter_reading_events(chunks, spread):
+    """从同一次流式回复取出三牌框架标记，再继续输出解读文字。"""
+    chunks = iter(chunks)
+    if spread != 3:
+        for chunk in chunks:
+            yield {"content": chunk}
+        return
+
+    opening = ""
+    for chunk in chunks:
+        opening = (opening + chunk).lstrip("\ufeff \t\r\n")
+        if "\n" not in opening and len(opening) < 180:
+            continue
+        first_line, _, rest = opening.partition("\n")
+        match = re.fullmatch(r"ARCANA_FRAMEWORK:\s*([a-z_]+)\s*", first_line.strip())
+        framework = match.group(1) if match and match.group(1) in THREE_CARD_FRAMEWORKS else DEFAULT_FRAMEWORK
+        yield {"framework": framework, "positions": THREE_CARD_FRAMEWORKS[framework]}
+        if first_line.strip().startswith("ARCANA_FRAMEWORK:"):
+            if rest:
+                yield {"content": rest}
+        elif opening:
+            yield {"content": opening}
+        break
+    else:
+        if not opening:
+            return
+        match = re.fullmatch(r"ARCANA_FRAMEWORK:\s*([a-z_]+)\s*", opening.strip())
+        framework = match.group(1) if match and match.group(1) in THREE_CARD_FRAMEWORKS else DEFAULT_FRAMEWORK
+        yield {"framework": framework, "positions": THREE_CARD_FRAMEWORKS[framework]}
+        if not opening.strip().startswith("ARCANA_FRAMEWORK:"):
+            yield {"content": opening}
+        return
+
+    for chunk in chunks:
+        yield {"content": chunk}
 
 
 @app.route("/api/models", methods=["POST", "OPTIONS"])
@@ -147,7 +196,7 @@ def reading():
         payload = request.get_json(silent=True)
         question, spread, cards = validate_payload(payload)
         upstream = open_chat_stream(build_messages(question, spread, cards), payload.get("provider"))
-        chunks = iter_chat_text(upstream)
+        chunks = iter_reading_events(iter_chat_text(upstream), spread)
         try:
             first = next(chunks, None)
         except Exception:
@@ -163,10 +212,15 @@ def reading():
     @stream_with_context
     def generate():
         try:
-            yield sse({"content": first})
-            for text in chunks:
-                yield sse({"content": text})
-            yield sse({"done": True})
+            yield sse(first)
+            has_text = bool(first.get("content"))
+            for event in chunks:
+                yield sse(event)
+                has_text = has_text or bool(event.get("content"))
+            if has_text:
+                yield sse({"done": True})
+            else:
+                yield sse({"error": "中转站没有返回解读文字，请检查所选模型。"})
         except Exception as error:
             yield sse({"error": friendly_error(error).message})
         finally:
