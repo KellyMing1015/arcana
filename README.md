@@ -38,8 +38,8 @@ LLM_MODEL=中转站支持的模型名
 ## 文件说明
 
 - `index.html`、`styles.css`、`cards.js`、`app.js`：抽牌页面、78 张牌的资料和交互。
-- `assets/cards/`：从 Wikimedia Commons 下载的 78 张高清牌面，以及每张图的来源链接。牌面原画由 Pamela Colman Smith 绘制；该文件分类页将素材标为公有领域。网页使用 960 像素宽的版本，并转为 JPEG 以缩短加载时间。牌背仍使用原来的 Arcana 设计。
-- `scripts/fetch_card_art.py`：需要重新获取图片时运行；依赖 macOS 自带的 `sips`。
+- `assets/cards/`：从 Wikimedia Commons 下载的 78 张高清牌面，以及每张图的来源链接。牌面原画由 Pamela Colman Smith 绘制；该文件分类页将素材标为公有领域。网页使用 960 像素宽的 WebP 版本，以缩短加载时间。牌背仍使用原来的 Arcana 设计。
+- `scripts/fetch_card_art.py`：需要重新获取图片时运行；使用 `requirements.txt` 中的 Pillow。
 - `settings.js`：页面中的供应商设置与本地保存。
 - `app.py`：Flask 网站与 `/api/reading` 接口，负责校验问题和牌面、传送流式解读。
 - `llm.py`：向 OpenAI 兼容格式的中转站发起请求；密钥只保存在后端环境变量中。

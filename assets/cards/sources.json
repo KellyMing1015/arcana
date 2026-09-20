@@ -1,314 +1,314 @@
 {
   "fool": {
-    "file": "fool.jpg",
+    "file": "fool.webp",
     "source": "https://commons.wikimedia.org/wiki/File:The_Fool_(Rider-Waite_Smith_tarot_deck).png"
   },
   "magician": {
-    "file": "magician.jpg",
+    "file": "magician.webp",
     "source": "https://commons.wikimedia.org/wiki/File:The_Magician_(Rider-Waite_Smith_tarot_deck).png"
   },
   "priestess": {
-    "file": "priestess.jpg",
+    "file": "priestess.webp",
     "source": "https://commons.wikimedia.org/wiki/File:The_High_Priestess_(Rider-Waite_Smith_tarot_deck).png"
   },
   "empress": {
-    "file": "empress.jpg",
+    "file": "empress.webp",
     "source": "https://commons.wikimedia.org/wiki/File:The_Empress_(Rider-Waite_Smith_tarot_deck).png"
   },
   "emperor": {
-    "file": "emperor.jpg",
+    "file": "emperor.webp",
     "source": "https://commons.wikimedia.org/wiki/File:The_Emperor_(Rider-Waite_Smith_tarot_deck).png"
   },
   "hierophant": {
-    "file": "hierophant.jpg",
+    "file": "hierophant.webp",
     "source": "https://commons.wikimedia.org/wiki/File:The_Hierophant_(Rider-Waite_Smith_tarot_deck).png"
   },
   "lovers": {
-    "file": "lovers.jpg",
+    "file": "lovers.webp",
     "source": "https://commons.wikimedia.org/wiki/File:The_Lovers_(Rider-Waite_Smith_tarot_deck).png"
   },
   "chariot": {
-    "file": "chariot.jpg",
+    "file": "chariot.webp",
     "source": "https://commons.wikimedia.org/wiki/File:The_Chariot_(Rider-Waite_Smith_tarot_deck).png"
   },
   "strength": {
-    "file": "strength.jpg",
+    "file": "strength.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Strength_(Rider-Waite_Smith_tarot_deck).png"
   },
   "hermit": {
-    "file": "hermit.jpg",
+    "file": "hermit.webp",
     "source": "https://commons.wikimedia.org/wiki/File:The_Hermit_(Rider-Waite_Smith_tarot_deck).png"
   },
   "wheel": {
-    "file": "wheel.jpg",
+    "file": "wheel.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Wheel_of_Fortune_(Rider-Waite_Smith_tarot_deck).png"
   },
   "justice": {
-    "file": "justice.jpg",
+    "file": "justice.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Justice_(Rider-Waite_Smith_tarot_deck).png"
   },
   "hanged": {
-    "file": "hanged.jpg",
+    "file": "hanged.webp",
     "source": "https://commons.wikimedia.org/wiki/File:The_Hanged_Man_(Rider-Waite_Smith_tarot_deck).png"
   },
   "death": {
-    "file": "death.jpg",
+    "file": "death.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Death_(Rider-Waite_Smith_tarot_deck).png"
   },
   "temperance": {
-    "file": "temperance.jpg",
+    "file": "temperance.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Temperance_(Rider-Waite_Smith_tarot_deck).png"
   },
   "devil": {
-    "file": "devil.jpg",
+    "file": "devil.webp",
     "source": "https://commons.wikimedia.org/wiki/File:The_Devil_(Rider-Waite_Smith_tarot_deck).png"
   },
   "tower": {
-    "file": "tower.jpg",
+    "file": "tower.webp",
     "source": "https://commons.wikimedia.org/wiki/File:The_Tower_(Rider-Waite_Smith_tarot_deck).png"
   },
   "star": {
-    "file": "star.jpg",
+    "file": "star.webp",
     "source": "https://commons.wikimedia.org/wiki/File:The_Star_(Rider-Waite_Smith_tarot_deck).png"
   },
   "moon": {
-    "file": "moon.jpg",
+    "file": "moon.webp",
     "source": "https://commons.wikimedia.org/wiki/File:The_Moon_(Rider-Waite_Smith_tarot_deck).png"
   },
   "sun": {
-    "file": "sun.jpg",
+    "file": "sun.webp",
     "source": "https://commons.wikimedia.org/wiki/File:The_Sun_(Rider-Waite_Smith_tarot_deck).png"
   },
   "judgement": {
-    "file": "judgement.jpg",
+    "file": "judgement.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Judgement_(Rider-Waite_Smith_tarot_deck).png"
   },
   "world": {
-    "file": "world.jpg",
+    "file": "world.webp",
     "source": "https://commons.wikimedia.org/wiki/File:The_World_(Rider-Waite_Smith_tarot_deck).png"
   },
   "wands-1": {
-    "file": "wands-1.jpg",
+    "file": "wands-1.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Ace_of_Wands_(Rider-Waite_Smith_tarot_deck).png"
   },
   "wands-2": {
-    "file": "wands-2.jpg",
+    "file": "wands-2.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Two_of_Wands_(Rider-Waite_Smith_tarot_deck).png"
   },
   "wands-3": {
-    "file": "wands-3.jpg",
+    "file": "wands-3.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Three_of_Wands_(Rider-Waite_Smith_tarot_deck).png"
   },
   "wands-4": {
-    "file": "wands-4.jpg",
+    "file": "wands-4.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Four_of_Wands_(Rider-Waite_Smith_tarot_deck).png"
   },
   "wands-5": {
-    "file": "wands-5.jpg",
+    "file": "wands-5.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Five_of_Wands_(Rider-Waite_Smith_tarot_deck).png"
   },
   "wands-6": {
-    "file": "wands-6.jpg",
+    "file": "wands-6.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Six_of_Wands_(Rider-Waite_Smith_tarot_deck).png"
   },
   "wands-7": {
-    "file": "wands-7.jpg",
+    "file": "wands-7.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Seven_of_Wands_(Rider-Waite_Smith_tarot_deck).png"
   },
   "wands-8": {
-    "file": "wands-8.jpg",
+    "file": "wands-8.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Eight_of_Wands_(Rider-Waite_Smith_tarot_deck).png"
   },
   "wands-9": {
-    "file": "wands-9.jpg",
+    "file": "wands-9.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Nine_of_Wands_(Rider-Waite_Smith_tarot_deck).png"
   },
   "wands-10": {
-    "file": "wands-10.jpg",
+    "file": "wands-10.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Ten_of_Wands_(Rider-Waite_Smith_tarot_deck).png"
   },
   "wands-11": {
-    "file": "wands-11.jpg",
+    "file": "wands-11.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Page_of_Wands_(Rider-Waite_Smith_tarot_deck).png"
   },
   "wands-12": {
-    "file": "wands-12.jpg",
+    "file": "wands-12.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Knight_of_Wands_(Rider-Waite_Smith_tarot_deck).png"
   },
   "wands-13": {
-    "file": "wands-13.jpg",
+    "file": "wands-13.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Queen_of_Wands_(Rider-Waite_Smith_tarot_deck).png"
   },
   "wands-14": {
-    "file": "wands-14.jpg",
+    "file": "wands-14.webp",
     "source": "https://commons.wikimedia.org/wiki/File:King_of_Wands_(Rider-Waite_Smith_tarot_deck).png"
   },
   "cups-1": {
-    "file": "cups-1.jpg",
+    "file": "cups-1.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Ace_of_Cups_(Rider-Waite_Smith_tarot_deck).png"
   },
   "cups-2": {
-    "file": "cups-2.jpg",
+    "file": "cups-2.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Two_of_Cups_(Rider-Waite_Smith_tarot_deck).png"
   },
   "cups-3": {
-    "file": "cups-3.jpg",
+    "file": "cups-3.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Three_of_Cups_(Rider-Waite_Smith_tarot_deck).png"
   },
   "cups-4": {
-    "file": "cups-4.jpg",
+    "file": "cups-4.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Four_of_Cups_(Rider-Waite_Smith_tarot_deck).png"
   },
   "cups-5": {
-    "file": "cups-5.jpg",
+    "file": "cups-5.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Five_of_Cups_(Rider-Waite_Smith_tarot_deck).png"
   },
   "cups-6": {
-    "file": "cups-6.jpg",
+    "file": "cups-6.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Six_of_Cups_(Rider-Waite_Smith_tarot_deck).png"
   },
   "cups-7": {
-    "file": "cups-7.jpg",
+    "file": "cups-7.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Seven_of_Cups_(Rider-Waite_Smith_tarot_deck).png"
   },
   "cups-8": {
-    "file": "cups-8.jpg",
+    "file": "cups-8.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Eight_of_Cups_(Rider-Waite_Smith_tarot_deck).png"
   },
   "cups-9": {
-    "file": "cups-9.jpg",
+    "file": "cups-9.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Nine_of_Cups_(Rider-Waite_Smith_tarot_deck).png"
   },
   "cups-10": {
-    "file": "cups-10.jpg",
+    "file": "cups-10.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Ten_of_Cups_(Rider-Waite_Smith_tarot_deck).png"
   },
   "cups-11": {
-    "file": "cups-11.jpg",
+    "file": "cups-11.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Page_of_Cups_(Rider-Waite_Smith_tarot_deck).png"
   },
   "cups-12": {
-    "file": "cups-12.jpg",
+    "file": "cups-12.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Knight_of_Cups_(Rider-Waite_Smith_tarot_deck).png"
   },
   "cups-13": {
-    "file": "cups-13.jpg",
+    "file": "cups-13.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Queen_of_Cups_(Rider-Waite_Smith_tarot_deck).png"
   },
   "cups-14": {
-    "file": "cups-14.jpg",
+    "file": "cups-14.webp",
     "source": "https://commons.wikimedia.org/wiki/File:King_of_Cups_(Rider-Waite_Smith_tarot_deck).png"
   },
   "swords-1": {
-    "file": "swords-1.jpg",
+    "file": "swords-1.webp",
     "source": "https://commons.wikimedia.org/wiki/File:One_of_Swords_(Rider-Waite_Smith_tarot_deck).png"
   },
   "swords-2": {
-    "file": "swords-2.jpg",
+    "file": "swords-2.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Two_of_Swords_(Rider-Waite_Smith_tarot_deck).png"
   },
   "swords-3": {
-    "file": "swords-3.jpg",
+    "file": "swords-3.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Three_of_Swords_(Rider-Waite_Smith_tarot_deck).png"
   },
   "swords-4": {
-    "file": "swords-4.jpg",
+    "file": "swords-4.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Four_of_Swords_(Rider-Waite_Smith_tarot_deck).png"
   },
   "swords-5": {
-    "file": "swords-5.jpg",
+    "file": "swords-5.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Five_of_Swords_(Rider-Waite_Smith_tarot_deck).png"
   },
   "swords-6": {
-    "file": "swords-6.jpg",
+    "file": "swords-6.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Six_of_Swords_(Rider-Waite_Smith_tarot_deck).png"
   },
   "swords-7": {
-    "file": "swords-7.jpg",
+    "file": "swords-7.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Seven_of_Swords_(Rider-Waite_Smith_tarot_deck).png"
   },
   "swords-8": {
-    "file": "swords-8.jpg",
+    "file": "swords-8.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Eight_of_Swords_(Rider-Waite_Smith_tarot_deck).png"
   },
   "swords-9": {
-    "file": "swords-9.jpg",
+    "file": "swords-9.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Nine_of_Swords_(Rider-Waite_Smith_tarot_deck).png"
   },
   "swords-10": {
-    "file": "swords-10.jpg",
+    "file": "swords-10.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Ten_of_Swords_(Rider-Waite_Smith_tarot_deck).png"
   },
   "swords-11": {
-    "file": "swords-11.jpg",
+    "file": "swords-11.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Page_of_Swords_(Rider-Waite_Smith_tarot_deck).png"
   },
   "swords-12": {
-    "file": "swords-12.jpg",
+    "file": "swords-12.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Knight_of_Swords_(Rider-Waite_Smith_tarot_deck).png"
   },
   "swords-13": {
-    "file": "swords-13.jpg",
+    "file": "swords-13.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Queen_of_Swords_(Rider-Waite_Smith_tarot_deck).png"
   },
   "swords-14": {
-    "file": "swords-14.jpg",
+    "file": "swords-14.webp",
     "source": "https://commons.wikimedia.org/wiki/File:King_of_Swords_(Rider-Waite_Smith_tarot_deck).png"
   },
   "pentacles-1": {
-    "file": "pentacles-1.jpg",
+    "file": "pentacles-1.webp",
     "source": "https://commons.wikimedia.org/wiki/File:One_of_Pentacles_(Rider-Waite_Smith_tarot_deck).png"
   },
   "pentacles-2": {
-    "file": "pentacles-2.jpg",
+    "file": "pentacles-2.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Two_of_Pentacles_(Rider-Waite_Smith_tarot_deck).png"
   },
   "pentacles-3": {
-    "file": "pentacles-3.jpg",
+    "file": "pentacles-3.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Three_of_Pentacles_(Rider-Waite_Smith_tarot_deck).png"
   },
   "pentacles-4": {
-    "file": "pentacles-4.jpg",
+    "file": "pentacles-4.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Four_of_Pentacles_(Rider-Waite_Smith_tarot_deck).png"
   },
   "pentacles-5": {
-    "file": "pentacles-5.jpg",
+    "file": "pentacles-5.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Five_of_Pentacles_(Rider-Waite_Smith_tarot_deck).png"
   },
   "pentacles-6": {
-    "file": "pentacles-6.jpg",
+    "file": "pentacles-6.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Six_of_Pentacles_(Rider-Waite_Smith_tarot_deck).png"
   },
   "pentacles-7": {
-    "file": "pentacles-7.jpg",
+    "file": "pentacles-7.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Seven_of_Pentacles_(Rider-Waite_Smith_tarot_deck).png"
   },
   "pentacles-8": {
-    "file": "pentacles-8.jpg",
+    "file": "pentacles-8.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Eight_of_Pentacles_(Rider-Waite_Smith_tarot_deck).png"
   },
   "pentacles-9": {
-    "file": "pentacles-9.jpg",
+    "file": "pentacles-9.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Nine_of_Pentacles_(Rider-Waite_Smith_tarot_deck).png"
   },
   "pentacles-10": {
-    "file": "pentacles-10.jpg",
+    "file": "pentacles-10.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Ten_of_Pentacles_(Rider-Waite_Smith_tarot_deck).png"
   },
   "pentacles-11": {
-    "file": "pentacles-11.jpg",
+    "file": "pentacles-11.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Page_of_Pentacles_(Rider-Waite_Smith_tarot_deck).png"
   },
   "pentacles-12": {
-    "file": "pentacles-12.jpg",
+    "file": "pentacles-12.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Knight_of_Pentacles_(Rider-Waite_Smith_tarot_deck).png"
   },
   "pentacles-13": {
-    "file": "pentacles-13.jpg",
+    "file": "pentacles-13.webp",
     "source": "https://commons.wikimedia.org/wiki/File:Queen_of_Pentacles_(Rider-Waite_Smith_tarot_deck).png"
   },
   "pentacles-14": {
-    "file": "pentacles-14.jpg",
+    "file": "pentacles-14.webp",
     "source": "https://commons.wikimedia.org/wiki/File:King_of_Pentacles_(Rider-Waite_Smith_tarot_deck).png"
   }
 }
