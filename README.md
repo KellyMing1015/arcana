@@ -1,6 +1,6 @@
 # Arcana
 
-一个网页塔罗抽牌与 AI 解读原型。你可以提问、长按牌面洗牌、滑动切牌、抽取单牌或牌阵，随后阅读逐字出现的解读。对话和记忆功能尚未接入。
+一个网页塔罗抽牌与 AI 解读原型。你可以提问、长按牌面洗牌、滑动切牌、抽取单牌或牌阵，随后阅读逐字出现的解读，并围绕同一副牌继续追问。
 
 ## 首次运行
 
@@ -40,9 +40,9 @@ LLM_MODEL=中转站支持的模型名
 - `index.html`、`styles.css`、`cards.js`、`app.js`：抽牌页面、78 张牌的资料和交互。
 - `assets/cards/`：从 Wikimedia Commons 下载的 78 张高清牌面，以及每张图的来源链接。牌面原画由 Pamela Colman Smith 绘制；该文件分类页将素材标为公有领域。网页使用 960 像素宽的 WebP 版本，以缩短加载时间。牌背仍使用原来的 Arcana 设计。
 - `scripts/fetch_card_art.py`：需要重新获取图片时运行；使用 `requirements.txt` 中的 Pillow。
-- `settings.js`：页面中的供应商设置与本地保存。
-- `app.py`：Flask 网站与 `/api/reading` 接口，负责校验问题和牌面、传送流式解读。
+- `settings.js`：页面中的供应商和用户信息设置，数据保存在浏览器 localStorage。
+- `app.py`：Flask 网站、首次解读和继续追问接口，负责校验数据、保存当前牌局的对话历史并传送流式回复。
 - `llm.py`：向 OpenAI 兼容格式的中转站发起请求；密钥只保存在后端环境变量中。
 - `prompts/system.md`：解读师的语气和解读原则。
 
-`POST /api/models` 使用供应商的 `/models` 接口拉取模型名。`POST /api/reading` 接收 `question`、`spread`、`cards`，以及可选的 `provider`。每张牌包含 `id`、`name`、`reversed`。三牌阵只调用一次模型：模型先选择六种解读框架之一，SSE 首先返回 `{"framework":"cause","positions":["问题","原因","建议"]}`，前端据此更新牌位标题，再接收 `{"content":"..."}` 逐字显示解读。结束时返回 `{"done":true}`；请求开始前的错误返回 `{"error":"具体原因"}`。若流已经开始，后续错误会作为同样结构的 SSE 消息返回。
+`POST /api/models` 使用供应商的 `/models` 接口拉取模型名。`POST /api/reading` 接收 `question`、`spread`、`cards`、`userInfo`，以及可选的 `provider`。三牌阵只调用一次模型：模型先选择六种解读框架之一，前端再更新牌位标题。首次解读会返回 `conversationId`。`POST /api/follow-up` 使用这个编号读取完整历史，并允许每次请求传入新的供应商配置；一副牌最多追问 8 轮。对话暂存在 Flask 进程内，服务重启或超过 6 小时后需要重新抽牌。所有文字都通过 SSE 流式返回；请求开始前的错误返回 `{"error":"具体原因"}`。

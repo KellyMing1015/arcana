@@ -1,5 +1,5 @@
 import { DECK, cardFace } from "./cards.js";
-import { getActiveProvider, getActiveProviderLabel, initializeProviderSettings } from "./settings.js";
+import { getActiveProvider, getActiveProviderLabel, getProviderChoices, getUserInfo, initializeProviderSettings, setActiveProvider } from "./settings.js";
 
 const app = document.querySelector("#app");
 const state = {
@@ -14,6 +14,9 @@ const state = {
   isHolding: false,
   cutCount: 0,
   framework: null,
+  conversationId: null,
+  followUpCount: 0,
+  initialProvider: null,
 };
 const labels = {
   1: ["此刻"],
@@ -132,6 +135,9 @@ function renderQuestion() {
     state.cutCount = 0;
     state.hoveredId = null;
     state.framework = null;
+    state.conversationId = null;
+    state.followUpCount = 0;
+    state.initialProvider = null;
     go("shuffle");
   });
 }
@@ -552,29 +558,13 @@ function createReadingOutput(actions) {
   return output;
 }
 
-async function fetchReading(output) {
-  const provider = getActiveProvider();
-  const response = await fetch("/api/reading", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      question: state.question,
-      spread: state.spread,
-      cards: state.selected.map((card, index) => ({
-        id: card.id,
-        name: `${card.chinese}（${card.english}）`,
-        position: positionLabels()[index],
-        reversed: card.reversed,
-      })),
-      ...(provider ? { provider } : {}),
-    }),
-  });
+async function streamToOutput(response, output, onPayload = () => {}) {
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
-    throw new Error(payload.error || `解读请求失败（${response.status}）。`);
+    throw new Error(payload.error || `请求失败（${response.status}）。`);
   }
   if (!response.body || !response.headers.get("content-type")?.includes("text/event-stream")) {
-    throw new Error("解读接口没有返回可读取的文字流。");
+    throw new Error("接口没有返回可读取的文字流。");
   }
 
   const reader = response.body.getReader();
@@ -614,13 +604,7 @@ async function fetchReading(output) {
     try { payload = JSON.parse(data); }
     catch { throw new Error("解读流的数据格式不正确。"); }
     if (payload.error) throw new Error(payload.error);
-    if (payload.framework && state.spread === 3) {
-      if (!threeCardFrameworks[payload.framework]) throw new Error("模型返回了无法识别的三牌框架。");
-      state.framework = payload.framework;
-      document.querySelectorAll(".result-card-label > span").forEach((element, index) => {
-        element.textContent = threeCardFrameworks[payload.framework][index];
-      });
-    }
+    onPayload(payload);
     if (typeof payload.content === "string") queueText(payload.content);
     if (payload.done === true) {
       done = true;
@@ -659,16 +643,160 @@ async function fetchReading(output) {
   }
 }
 
+async function fetchReading(output) {
+  const provider = state.initialProvider;
+  const response = await fetch("/api/reading", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      question: state.question,
+      spread: state.spread,
+      cards: state.selected.map((card, index) => ({
+        id: card.id,
+        name: `${card.chinese}（${card.english}）`,
+        position: positionLabels()[index],
+        reversed: card.reversed,
+      })),
+      userInfo: getUserInfo(),
+      ...(provider ? { provider } : {}),
+    }),
+  });
+  await streamToOutput(response, output, (payload) => {
+    if (payload.conversationId) state.conversationId = payload.conversationId;
+    if (payload.framework && state.spread === 3) {
+      if (!threeCardFrameworks[payload.framework]) throw new Error("模型返回了无法识别的三牌框架。");
+      state.framework = payload.framework;
+      document.querySelectorAll(".result-card-label > span").forEach((element, index) => {
+        element.textContent = threeCardFrameworks[payload.framework][index];
+      });
+    }
+  });
+  if (!state.conversationId) throw new Error("解读服务没有建立对话，请重新解读。");
+}
+
+async function fetchFollowUp(message, output) {
+  const provider = getActiveProvider();
+  let completion = null;
+  const response = await fetch("/api/follow-up", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      conversationId: state.conversationId,
+      message,
+      ...(provider ? { provider } : {}),
+    }),
+  });
+  await streamToOutput(response, output, (payload) => {
+    if (payload.done) completion = payload;
+  });
+  if (!completion) throw new Error("追问连接提前结束，请再试一次。");
+  state.followUpCount = completion.rounds;
+  return completion;
+}
+
+function providerOptionsHTML() {
+  return getProviderChoices().map((item) => `<option value="${escapeHTML(item.id)}">${escapeHTML(item.label)}</option>`).join("");
+}
+
+function refreshResultProviderSelect() {
+  const select = document.querySelector("#result-provider");
+  if (!select) return;
+  const choices = getProviderChoices();
+  select.innerHTML = choices.map((item) => `<option value="${escapeHTML(item.id)}">${escapeHTML(item.label)}</option>`).join("");
+  select.value = choices.find((item) => item.active)?.id || "";
+}
+
+function createFollowUpPanel(output) {
+  const panel = document.createElement("section");
+  panel.id = "follow-up-panel";
+  panel.className = "follow-up-panel";
+  panel.innerHTML = `<div class="follow-up-heading"><span class="eyebrow">KEEP TALKING</span><h2>还想继续问什么？</h2><p>塔罗师会带着这次牌面和前面的全部对话继续回应。</p></div>
+    <div id="follow-up-messages" class="follow-up-messages" aria-live="polite"></div>
+    <form id="follow-up-form" class="follow-up-form">
+      <label class="sr-only" for="follow-up-input">继续追问</label>
+      <textarea id="follow-up-input" maxlength="2000" rows="3" placeholder="把你还没说完的话写在这里……"></textarea>
+      <div class="follow-up-controls"><span id="follow-up-count">还可以追问 8 轮</span><button type="submit">发送 <span aria-hidden="true">↗</span></button></div>
+      <p id="follow-up-status" class="follow-up-status" role="status"></p>
+    </form>`;
+  output.after(panel);
+  bindFollowUpForm(panel);
+  return panel;
+}
+
+function bindFollowUpForm(panel) {
+  const form = panel.querySelector("#follow-up-form");
+  const input = panel.querySelector("#follow-up-input");
+  const button = form.querySelector("button");
+  const status = panel.querySelector("#follow-up-status");
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const message = input.value.trim();
+    if (!message || state.followUpCount >= 8) { input.focus(); return; }
+    input.value = "";
+    input.disabled = true;
+    button.disabled = true;
+    status.textContent = "塔罗师正在回应...";
+    const messages = panel.querySelector("#follow-up-messages");
+    const userMessage = document.createElement("article");
+    userMessage.className = "conversation-message conversation-user";
+    userMessage.innerHTML = `<small>你</small><p>${escapeHTML(message)}</p>`;
+    const answer = document.createElement("article");
+    answer.className = "conversation-message conversation-reader";
+    answer.innerHTML = `<small>塔罗师</small><p>塔罗师正在回应...</p>`;
+    messages.append(userMessage, answer);
+    answer.scrollIntoView({ behavior: "smooth", block: "center" });
+    const answerText = answer.querySelector("p");
+    try {
+      answerText.textContent = "";
+      const completion = await fetchFollowUp(message, answerText);
+      const remaining = Math.max(0, 8 - state.followUpCount);
+      panel.querySelector("#follow-up-count").textContent = remaining ? `还可以追问 ${remaining} 轮` : "本次牌局已完成 8 轮追问";
+      if (completion.closed) {
+        input.disabled = true;
+        input.placeholder = "这次牌局已经收牌";
+        button.disabled = true;
+        status.textContent = "这次对话已经完整结束。想问新的议题时，可以重新抽牌。";
+        form.classList.add("is-closed");
+        return;
+      }
+      status.textContent = "";
+    } catch (error) {
+      answer.classList.add("is-error");
+      answerText.textContent = error instanceof TypeError ? "暂时无法连接解读服务，请确认 Flask 已启动。" : (error.message || "回应失败，请稍后再试。");
+      status.textContent = "这轮没有计入次数，你可以修改后重新发送。";
+      input.value = message;
+    } finally {
+      if (state.followUpCount < 8) {
+        input.disabled = false;
+        button.disabled = false;
+        input.focus();
+      }
+    }
+  });
+}
+
 function renderResult() {
   app.innerHTML = `<section class="ritual-screen result-screen screen-enter">
-    <div class="ritual-top"><button class="ritual-back" id="start-over">← 重新开始</button><span>04 / 04 — 你的牌阵</span></div>
+    <div class="ritual-top result-top"><button class="ritual-back" id="start-over">← 重新开始</button><span>04 / 04 — 你的牌阵</span><label class="result-provider-switch" hidden><span>切换供应商</span><select id="result-provider" aria-label="切换后续对话使用的供应商">${providerOptionsHTML()}</select></label></div>
     <div class="result-heading"><span class="eyebrow">YOUR CARDS HAVE FOUND THEIR PLACE</span><h1>你的牌，已经来到面前。</h1><p>“${escapeHTML(state.question)}”</p></div>
     <div class="result-layout result-layout-${state.spread}">${state.selected.map(resultCard).join("")}</div>
-    <div class="result-actions"><button class="ritual-primary" id="interpret" type="button">开始解读 <span aria-hidden="true">↗</span></button><p>解读会逐字出现。对话与记忆将在下一阶段接入。</p></div>
+    <div class="result-actions"><button class="ritual-primary" id="interpret" type="button">开始解读 <span aria-hidden="true">↗</span></button><p>解读会逐字出现，完成后可以继续追问 8 轮。</p></div>
   </section>`;
+  refreshResultProviderSelect();
   document.querySelector("#start-over").addEventListener("click", () => {
     state.question = "";
+    state.conversationId = null;
+    state.followUpCount = 0;
+    state.initialProvider = null;
     go("question");
+  });
+  document.querySelector("#result-provider").addEventListener("change", (event) => {
+    if (!setActiveProvider(event.currentTarget.value)) {
+      refreshResultProviderSelect();
+      return;
+    }
+    const status = document.querySelector("#follow-up-status");
+    if (status && state.conversationId) status.textContent = `后续追问将使用：${getActiveProviderLabel()}`;
   });
   const button = document.querySelector("#interpret");
   const actions = document.querySelector(".result-actions");
@@ -690,10 +818,15 @@ function renderResult() {
     output.textContent = "正在倾听你的问题…";
     output.scrollIntoView({ behavior: "smooth", block: "start" });
     try {
+      state.conversationId = null;
+      state.followUpCount = 0;
+      state.initialProvider = getActiveProvider();
       output.textContent = "";
       await fetchReading(output);
       button.firstChild.textContent = "再来一次 ";
       button.dataset.completed = "true";
+      document.querySelector(".result-provider-switch").hidden = false;
+      createFollowUpPanel(output);
     } catch (error) {
       const message = error instanceof TypeError
         ? "暂时无法连接解读服务，请确认 Flask 已启动。"
@@ -720,5 +853,6 @@ function render() {
 initializeProviderSettings(() => {
   const indicator = document.querySelector("#provider-indicator");
   if (indicator) indicator.textContent = getActiveProviderLabel();
+  refreshResultProviderSelect();
 });
 render();
