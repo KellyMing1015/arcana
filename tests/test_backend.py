@@ -14,6 +14,7 @@ import llm
 
 class ReadingTests(unittest.TestCase):
     def setUp(self):
+        website.CONVERSATIONS.clear()
         self.client = website.app.test_client()
         self.payload = {
             "question": "我该如何看待这段关系？",
@@ -46,9 +47,11 @@ class ReadingTests(unittest.TestCase):
         upstream.assert_called_once()
         self.assertIn("text/event-stream", response.content_type)
         events = [json.loads(line[6:]) for line in response.get_data(as_text=True).splitlines() if line.startswith("data: ")]
-        self.assertEqual(events, [
+        self.assertRegex(events[0]["conversationId"], r"^[0-9a-f]{32}$")
+        self.assertEqual(events[1:], [
             {"framework": "cause", "positions": ["问题", "原因", "建议"]},
-            {"content": "我看到"}, {"content": "你的犹豫"}, {"done": True},
+            {"content": "我看到"}, {"content": "你的犹豫"},
+            {"done": True, "rounds": 0, "closed": False},
         ])
         self.assertEqual(sent_messages[0]["role"], "system")
         self.assertIn("ARCANA_FRAMEWORK", sent_messages[0]["content"])
@@ -64,8 +67,8 @@ class ReadingTests(unittest.TestCase):
         with patch.object(website, "open_chat_stream", return_value=stream):
             response = self.client.post("/api/reading", json=self.payload, buffered=True)
         events = [json.loads(line[6:]) for line in response.get_data(as_text=True).splitlines() if line.startswith("data: ")]
-        self.assertEqual(events[0], {"framework": "timeline", "positions": ["过去", "现在", "未来"]})
-        self.assertEqual(events[1], {"content": "Read the cards."})
+        self.assertEqual(events[1], {"framework": "timeline", "positions": ["过去", "现在", "未来"]})
+        self.assertEqual(events[2], {"content": "Read the cards."})
 
     def test_six_frameworks_keep_their_three_positions(self):
         for key, positions in website.THREE_CARD_FRAMEWORKS.items():
@@ -87,6 +90,74 @@ class ReadingTests(unittest.TestCase):
             response = self.client.post("/api/reading", json={**self.payload, "provider": provider}, buffered=True)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(upstream.call_args.args[1], provider)
+
+    def test_enabled_user_info_is_added_to_system_prompt_and_disabled_info_is_not(self):
+        captured = []
+        stream = lambda: io.BytesIO(b'data: {"choices":[{"delta":{"content":"ARCANA_FRAMEWORK:cause\\nanswer"}}]}\n\ndata: [DONE]\n\n')
+
+        def fake_upstream(messages, _provider):
+            captured.append(messages[0]["content"])
+            return stream()
+
+        enabled = {"enabled": True, "nickname": "小欧", "age": "28", "gender": "女", "zodiac": "天蝎座", "status": "正在转型做独立产品"}
+        disabled = {**enabled, "enabled": False}
+        with patch.object(website, "open_chat_stream", side_effect=fake_upstream):
+            self.client.post("/api/reading", json={**self.payload, "userInfo": enabled}, buffered=True)
+            self.client.post("/api/reading", json={**self.payload, "userInfo": disabled}, buffered=True)
+        self.assertIn("昵称：小欧", captured[0])
+        self.assertIn("当前状态：正在转型做独立产品", captured[0])
+        self.assertNotIn("昵称：小欧", captured[1])
+
+    def test_follow_up_uses_full_history_and_can_switch_provider(self):
+        calls = []
+        streams = [
+            io.BytesIO(b'data: {"choices":[{"delta":{"content":"ARCANA_FRAMEWORK:cause\\ninitial reading"}}]}\n\ndata: [DONE]\n\n'),
+            io.BytesIO(b'data: {"choices":[{"delta":{"content":"follow-up answer"}}]}\n\ndata: [DONE]\n\n'),
+        ]
+
+        def fake_upstream(messages, provider):
+            calls.append((messages, provider))
+            return streams.pop(0)
+
+        second_provider = {"baseUrl": "https://backup.example/v1", "apiKey": "key", "model": "backup-model"}
+        with patch.object(website, "open_chat_stream", side_effect=fake_upstream):
+            first = self.client.post("/api/reading", json=self.payload, buffered=True)
+            first_events = [json.loads(line[6:]) for line in first.get_data(as_text=True).splitlines() if line.startswith("data: ")]
+            conversation_id = first_events[0]["conversationId"]
+            follow = self.client.post("/api/follow-up", json={"conversationId": conversation_id, "message": "那我接下来先做什么？", "provider": second_provider}, buffered=True)
+
+        follow_events = [json.loads(line[6:]) for line in follow.get_data(as_text=True).splitlines() if line.startswith("data: ")]
+        self.assertEqual(follow_events, [{"content": "follow-up answer"}, {"done": True, "rounds": 1, "closed": False}])
+        self.assertEqual(calls[1][1], second_provider)
+        history = calls[1][0]
+        self.assertEqual([item["role"] for item in history], ["system", "user", "assistant", "user"])
+        self.assertEqual(history[-2]["content"], "initial reading")
+        self.assertEqual(history[-1]["content"], "那我接下来先做什么？")
+
+    def test_eighth_follow_up_closes_conversation_and_ninth_is_rejected(self):
+        conversation_id = "a" * 32
+        website.CONVERSATIONS[conversation_id] = {
+            "messages": [{"role": "system", "content": website.SYSTEM_PROMPT}, {"role": "user", "content": "question"}, {"role": "assistant", "content": "reading"}],
+            "rounds": 0,
+            "busy": False,
+            "updated_at": website.time.time(),
+        }
+        sent_messages = []
+
+        def fake_upstream(messages, _provider):
+            sent_messages.append(messages)
+            return io.BytesIO(b'data: {"choices":[{"delta":{"content":"answer"}}]}\n\ndata: [DONE]\n\n')
+
+        with patch.object(website, "open_chat_stream", side_effect=fake_upstream) as upstream:
+            for round_number in range(1, 9):
+                response = self.client.post("/api/follow-up", json={"conversationId": conversation_id, "message": f"follow {round_number}"}, buffered=True)
+                events = [json.loads(line[6:]) for line in response.get_data(as_text=True).splitlines() if line.startswith("data: ")]
+                self.assertEqual(events[-1]["rounds"], round_number)
+            self.assertTrue(events[-1]["closed"])
+            self.assertIn("第八次", sent_messages[-1][0]["content"])
+            rejected = self.client.post("/api/follow-up", json={"conversationId": conversation_id, "message": "one more"})
+            self.assertEqual(rejected.status_code, 409)
+            self.assertEqual(upstream.call_count, 8)
 
     def test_models_endpoint_returns_provider_list(self):
         provider = {"baseUrl": "https://relay.example/v1", "apiKey": "key"}
