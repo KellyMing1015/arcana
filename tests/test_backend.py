@@ -99,13 +99,22 @@ class ReadingTests(unittest.TestCase):
             captured.append(messages[0]["content"])
             return stream()
 
-        enabled = {"enabled": True, "nickname": "小欧", "age": "28", "gender": "女", "zodiac": "天蝎座", "status": "正在转型做独立产品"}
+        enabled = {
+            "enabled": True,
+            "nickname": "小欧",
+            "age": "28",
+            "gender": "女",
+            "zodiac": "天蝎座",
+            "currentStatus": "正在转型做独立产品",
+            "focusAreas": ["产品", "成长"],
+        }
         disabled = {**enabled, "enabled": False}
         with patch.object(website, "open_chat_stream", side_effect=fake_upstream):
             self.client.post("/api/reading", json={**self.payload, "userInfo": enabled}, buffered=True)
             self.client.post("/api/reading", json={**self.payload, "userInfo": disabled}, buffered=True)
         self.assertIn("昵称：小欧", captured[0])
         self.assertIn("当前状态：正在转型做独立产品", captured[0])
+        self.assertIn("关注方向：产品、成长", captured[0])
         self.assertNotIn("昵称：小欧", captured[1])
 
     def test_follow_up_uses_full_history_and_can_switch_provider(self):
@@ -158,6 +167,18 @@ class ReadingTests(unittest.TestCase):
             rejected = self.client.post("/api/follow-up", json={"conversationId": conversation_id, "message": "one more"})
             self.assertEqual(rejected.status_code, 409)
             self.assertEqual(upstream.call_count, 8)
+
+    def test_user_can_end_conversation_early(self):
+        conversation_id = "b" * 32
+        website.CONVERSATIONS[conversation_id] = {
+            "messages": [], "rounds": 2, "busy": False, "updated_at": website.time.time(),
+        }
+        response = self.client.post("/api/conversation/end", json={"conversationId": conversation_id})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json, {"ended": True})
+        self.assertNotIn(conversation_id, website.CONVERSATIONS)
+        follow = self.client.post("/api/follow-up", json={"conversationId": conversation_id, "message": "还在吗"})
+        self.assertEqual(follow.status_code, 404)
 
     def test_models_endpoint_returns_provider_list(self):
         provider = {"baseUrl": "https://relay.example/v1", "apiKey": "key"}
