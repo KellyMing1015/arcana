@@ -154,6 +154,10 @@ function renderShuffle() {
     <div class="ritual-instruction" id="shuffle-instruction"><span class="instruction-mark" aria-hidden="true"></span><strong>按住牌面洗牌</strong><small>长按半秒开始，轻触不会洗牌</small></div>
     <p class="ritual-question">“${escapeHTML(state.question)}”</p>
   </section>`;
+  const screen = document.querySelector(".shuffle-screen");
+  const preventSelection = (event) => event.preventDefault();
+  screen.addEventListener("selectstart", preventSelection);
+  screen.addEventListener("dragstart", preventSelection);
   document.querySelector("#back-question").addEventListener("click", () => go("question"));
   const pile = document.querySelector("#shuffle-pile");
   let holdTimer = null;
@@ -232,9 +236,9 @@ function renderShuffle() {
 function renderCut() {
   app.innerHTML = `<section class="ritual-screen cut-screen screen-enter">
     <div class="ritual-top"><button class="ritual-back" id="reshuffle-top">← 重新洗牌</button><span>02 / 04 — 切牌</span></div>
-    <div class="ritual-heading"><span class="eyebrow">A SMALL CHANGE IN THE ORDER</span><h1>轮到你切牌。</h1><p id="cut-description">在牌堆上向左或向右滑动。你可以按自己的节奏多切几次。</p></div>
+    <div class="ritual-heading"><span class="eyebrow">A SMALL CHANGE IN THE ORDER</span><h1>轮到你切牌。</h1><p id="cut-description">左右滑动可以切牌，也可以直接完成。按你的直觉来。</p></div>
     <div class="cut-stage"><div class="cut-halo" aria-hidden="true"></div><div class="cut-pile" id="cut-pile" role="button" tabindex="0" aria-label="向左或向右拖动切牌，键盘可用左右方向键切牌"><div class="cut-half cut-bottom">${backArt()}</div><div class="cut-half cut-top">${backArt()}</div></div></div>
-    <div class="cut-actions"><button class="ritual-primary cut-button" type="button" id="cut-done" hidden>完成 <span aria-hidden="true">↗</span></button><button class="ritual-secondary" type="button" id="reshuffle">重新洗牌</button></div>
+    <div class="cut-actions"><button class="ritual-primary cut-button" type="button" id="cut-done">完成 <span aria-hidden="true">↗</span></button><button class="ritual-secondary" type="button" id="reshuffle">重新洗牌</button></div>
     <p class="cut-count" id="cut-count">尚未切牌</p>
   </section>`;
   document.querySelector("#reshuffle-top").addEventListener("click", () => go("shuffle"));
@@ -710,14 +714,16 @@ function createFollowUpPanel(output) {
   const panel = document.createElement("section");
   panel.id = "follow-up-panel";
   panel.className = "follow-up-panel";
-  panel.innerHTML = `<div class="follow-up-heading"><span class="eyebrow">KEEP TALKING</span><h2>还想继续问什么？</h2><p>塔罗师会带着这次牌面和前面的全部对话继续回应。</p></div>
-    <div id="follow-up-messages" class="follow-up-messages" aria-live="polite"></div>
-    <form id="follow-up-form" class="follow-up-form">
-      <label class="sr-only" for="follow-up-input">继续追问</label>
-      <textarea id="follow-up-input" maxlength="2000" rows="3" placeholder="把你还没说完的话写在这里……"></textarea>
-      <div class="follow-up-controls"><span id="follow-up-count">还可以追问 8 轮</span><button type="submit">发送 <span aria-hidden="true">↗</span></button></div>
-      <p id="follow-up-status" class="follow-up-status" role="status"></p>
-    </form>`;
+  panel.innerHTML = `<div class="follow-up-heading"><span class="eyebrow">KEEP TALKING</span><h2>继续和塔罗师聊聊</h2><p>她会带着这次牌面和前面的全部对话继续回应。</p></div>
+    <div class="chat-window">
+      <div class="chat-window-bar"><span class="chat-presence" aria-hidden="true"></span><strong>Arcana 塔罗师</strong><small id="follow-up-count">还可以追问 8 轮</small></div>
+      <div id="follow-up-messages" class="follow-up-messages" aria-live="polite"></div>
+      <form id="follow-up-form" class="follow-up-form">
+        <label class="sr-only" for="follow-up-input">继续追问</label>
+        <textarea id="follow-up-input" maxlength="2000" rows="3" placeholder="把你还没说完的话写在这里……"></textarea>
+        <div class="follow-up-controls"><p id="follow-up-status" class="follow-up-status" role="status"></p><div class="follow-up-buttons"><button id="end-conversation" class="end-conversation" type="button">结束对话</button><button class="send-follow-up" type="submit">发送</button></div></div>
+      </form>
+    </div>`;
   output.after(panel);
   bindFollowUpForm(panel);
   return panel;
@@ -726,8 +732,29 @@ function createFollowUpPanel(output) {
 function bindFollowUpForm(panel) {
   const form = panel.querySelector("#follow-up-form");
   const input = panel.querySelector("#follow-up-input");
-  const button = form.querySelector("button");
+  const button = form.querySelector(".send-follow-up");
+  const endButton = form.querySelector("#end-conversation");
   const status = panel.querySelector("#follow-up-status");
+  endButton.addEventListener("click", async () => {
+    input.disabled = true;
+    button.disabled = true;
+    endButton.disabled = true;
+    status.textContent = "正在结束这次对话…";
+    try {
+      await fetch("/api/conversation/end", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationId: state.conversationId }),
+      });
+    } catch {
+      // The local interface still closes even if the server was already unavailable.
+    } finally {
+      state.conversationId = null;
+      form.classList.add("is-closed");
+      input.placeholder = "这次对话已经结束";
+      status.textContent = "这次牌已经收好。想聊新的议题时，可以重新抽牌。";
+    }
+  });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const message = input.value.trim();
@@ -735,14 +762,15 @@ function bindFollowUpForm(panel) {
     input.value = "";
     input.disabled = true;
     button.disabled = true;
+    endButton.disabled = true;
     status.textContent = "塔罗师正在回应...";
     const messages = panel.querySelector("#follow-up-messages");
     const userMessage = document.createElement("article");
     userMessage.className = "conversation-message conversation-user";
-    userMessage.innerHTML = `<small>你</small><p>${escapeHTML(message)}</p>`;
+    userMessage.innerHTML = `<div class="chat-message-body"><small>你</small><div class="chat-bubble"><p>${escapeHTML(message)}</p></div></div><span class="chat-avatar chat-avatar-user" aria-hidden="true">你</span>`;
     const answer = document.createElement("article");
     answer.className = "conversation-message conversation-reader";
-    answer.innerHTML = `<small>塔罗师</small><p>塔罗师正在回应...</p>`;
+    answer.innerHTML = `<span class="chat-avatar chat-avatar-reader" aria-hidden="true">A</span><div class="chat-message-body"><small>塔罗师</small><div class="chat-bubble"><p>塔罗师正在回应...</p></div></div>`;
     messages.append(userMessage, answer);
     answer.scrollIntoView({ behavior: "smooth", block: "center" });
     const answerText = answer.querySelector("p");
@@ -755,6 +783,7 @@ function bindFollowUpForm(panel) {
         input.disabled = true;
         input.placeholder = "这次牌局已经收牌";
         button.disabled = true;
+        endButton.disabled = true;
         status.textContent = "这次对话已经完整结束。想问新的议题时，可以重新抽牌。";
         form.classList.add("is-closed");
         return;
@@ -769,6 +798,7 @@ function bindFollowUpForm(panel) {
       if (state.followUpCount < 8) {
         input.disabled = false;
         button.disabled = false;
+        endButton.disabled = false;
         input.focus();
       }
     }

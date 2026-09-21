@@ -1,5 +1,6 @@
 const PROVIDER_STORAGE_KEY = "arcana.providers.v1";
-const PROFILE_STORAGE_KEY = "arcana.user-info.v1";
+const PROFILE_STORAGE_KEY = "arcana.user-profiles.v2";
+const LEGACY_PROFILE_STORAGE_KEY = "arcana.user-info.v1";
 const ZODIACS = ["白羊座", "金牛座", "双子座", "巨蟹座", "狮子座", "处女座", "天秤座", "天蝎座", "射手座", "摩羯座", "水瓶座", "双鱼座"];
 
 function escapeHTML(value) {
@@ -24,28 +25,64 @@ function loadSettings() {
   }
 }
 
-function loadUserInfo() {
-  const defaults = { enabled: true, nickname: "", age: "", gender: "", zodiac: "", status: "" };
+function makeId() {
+  return crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+}
+
+function normalizeProfiles(value) {
+  if (!Array.isArray(value)) return [];
+  let hasActiveProfile = false;
+  const usedIds = new Set();
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    let id = typeof item.id === "string" && item.id ? item.id : makeId();
+    if (usedIds.has(id)) id = makeId();
+    usedIds.add(id);
+    const isActive = item.isActive === true && !hasActiveProfile;
+    if (isActive) hasActiveProfile = true;
+    return [{
+      id,
+      nickname: typeof item.nickname === "string" ? item.nickname.slice(0, 80) : "",
+      age: typeof item.age === "string" ? item.age.slice(0, 20) : "",
+      gender: ["", "女", "男"].includes(item.gender) ? item.gender : "",
+      zodiac: ["", ...ZODIACS].includes(item.zodiac) ? item.zodiac : "",
+      currentStatus: typeof item.currentStatus === "string" ? item.currentStatus.slice(0, 1000) : "",
+      focusAreas: Array.isArray(item.focusAreas)
+        ? [...new Set(item.focusAreas.filter((area) => typeof area === "string").map((area) => area.trim().slice(0, 40)).filter(Boolean))].slice(0, 12)
+        : [],
+      isActive,
+    }];
+  });
+}
+
+function loadProfiles() {
   try {
     const parsed = JSON.parse(localStorage.getItem(PROFILE_STORAGE_KEY) || "null");
-    if (!parsed || typeof parsed !== "object") return defaults;
-    return {
-      enabled: typeof parsed.enabled === "boolean" ? parsed.enabled : true,
-      nickname: typeof parsed.nickname === "string" ? parsed.nickname.slice(0, 80) : "",
-      age: typeof parsed.age === "string" ? parsed.age.slice(0, 20) : "",
-      gender: ["", "女", "男"].includes(parsed.gender) ? parsed.gender : "",
-      zodiac: ["", ...ZODIACS].includes(parsed.zodiac) ? parsed.zodiac : "",
-      status: typeof parsed.status === "string" ? parsed.status.slice(0, 1000) : "",
-    };
+    if (Array.isArray(parsed)) return normalizeProfiles(parsed);
+
+    const legacy = JSON.parse(localStorage.getItem(LEGACY_PROFILE_STORAGE_KEY) || "null");
+    if (!legacy || typeof legacy !== "object") return [];
+    const nickname = typeof legacy.nickname === "string" ? legacy.nickname.slice(0, 80) : "";
+    const age = typeof legacy.age === "string" ? legacy.age.slice(0, 20) : "";
+    const gender = ["", "女", "男"].includes(legacy.gender) ? legacy.gender : "";
+    const zodiac = ["", ...ZODIACS].includes(legacy.zodiac) ? legacy.zodiac : "";
+    const currentStatus = typeof legacy.status === "string" ? legacy.status.slice(0, 1000) : "";
+    if (![nickname, age, gender, zodiac, currentStatus].some(Boolean)) return [];
+    const migrated = normalizeProfiles([{
+      id: makeId(), nickname, age, gender, zodiac, currentStatus, focusAreas: [], isActive: legacy.enabled !== false,
+    }]);
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(migrated));
+    return migrated;
   } catch {
-    return defaults;
+    return [];
   }
 }
 
 let settings = loadSettings();
-let userInfo = loadUserInfo();
+let userProfiles = loadProfiles();
 let selectedId = settings.activeId || settings.providers[0]?.id || null;
-let activeSection = "providers";
+let activeSection = "home";
+let editingUserId = null;
 let pendingDeleteId = null;
 let onChange = () => {};
 
@@ -61,10 +98,11 @@ function persistProviders(next) {
   }
 }
 
-function persistUserInfo(next) {
+function persistProfiles(next) {
   try {
-    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(next));
-    userInfo = next;
+    const normalized = normalizeProfiles(next);
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(normalized));
+    userProfiles = normalized;
     onChange();
     return true;
   } catch {
@@ -104,7 +142,8 @@ export function setActiveProvider(id) {
 }
 
 export function getUserInfo() {
-  return userInfo.enabled ? { ...userInfo } : { enabled: false };
+  const active = userProfiles.find((profile) => profile.isActive);
+  return active ? { enabled: true, ...active } : { enabled: false };
 }
 
 function providerList() {
@@ -142,85 +181,213 @@ function providerEditor() {
   <p class="settings-storage-note">供应商配置只保存在这个浏览器中；解读时由本机 Flask 转发。</p>`;
 }
 
-function userInfoEditor() {
-  const disabled = userInfo.enabled ? "" : " disabled";
-  const zodiacOptions = ["", ...ZODIACS].map((value) => `<option value="${value}" ${userInfo.zodiac === value ? "selected" : ""}>${value || "请选择星座"}</option>`).join("");
-  return `<div class="settings-editor-heading"><div><span class="eyebrow">PERSONAL CONTEXT</span><h2>用户信息</h2></div></div>
-  <p class="settings-editor-intro">这些内容都是选填，只用于让塔罗师理解你的语境。关闭后，解读请求不会带上任何个人信息。</p>
-  <form id="user-info-form" novalidate>
-    <label class="profile-toggle"><span><strong>启用个人信息</strong><small>开启后，只传递你实际填写的内容</small></span><input id="profile-enabled" type="checkbox" ${userInfo.enabled ? "checked" : ""}><i aria-hidden="true"></i></label>
-    <fieldset id="profile-fields" class="profile-fields"${disabled}>
-      <label class="settings-field"><span>昵称</span><input name="nickname" type="text" maxlength="80" autocomplete="nickname" placeholder="希望塔罗师怎么称呼你" value="${escapeHTML(userInfo.nickname)}"></label>
-      <div class="profile-two-columns">
-        <label class="settings-field"><span>年龄</span><input name="age" type="text" maxlength="20" inputmode="numeric" placeholder="选填" value="${escapeHTML(userInfo.age)}"></label>
-        <label class="settings-field"><span>性别</span><select name="gender"><option value="">请选择</option><option value="女" ${userInfo.gender === "女" ? "selected" : ""}>女</option><option value="男" ${userInfo.gender === "男" ? "selected" : ""}>男</option></select></label>
-      </div>
-      <label class="settings-field"><span>星座</span><select name="zodiac">${zodiacOptions}</select></label>
-      <label class="settings-field"><span>当前状态</span><textarea name="status" maxlength="1000" rows="7" placeholder="例如最近正在经历什么、在意什么，或生活处于什么阶段">${escapeHTML(userInfo.status)}</textarea><small><span id="profile-status-count">${userInfo.status.length}</span> / 1000</small></label>
-    </fieldset>
-    <div class="settings-form-actions"><button class="settings-save" type="submit">保存个人信息 <span aria-hidden="true">↗</span></button></div>
-    <p id="settings-feedback" class="settings-feedback" role="status" aria-live="polite"></p>
-  </form>
-  <p class="settings-storage-note">个人信息只保存在当前浏览器的 localStorage 中。开启后，填写过的字段会随解读请求发送给你选择的模型供应商。</p>`;
+function profileMeta(profile) {
+  const values = [profile.zodiac, ...profile.focusAreas].filter(Boolean);
+  return values.length ? values.join(" · ") : "尚未填写更多信息";
 }
 
-function settingsSidebar() {
+function userManager() {
+  const active = userProfiles.find((profile) => profile.isActive);
+  const rows = userProfiles.length
+    ? userProfiles.map((profile) => `<div class="user-profile-row" data-profile-id="${escapeHTML(profile.id)}">
+        <div class="user-profile-actions">
+          <button type="button" data-profile-edit="${escapeHTML(profile.id)}">编辑</button>
+          <button class="is-delete" type="button" data-profile-delete="${escapeHTML(profile.id)}">删除</button>
+        </div>
+        <div class="user-profile-surface">
+          <span class="user-profile-copy"><strong>${escapeHTML(profile.nickname || "未命名用户")}</strong><small>${escapeHTML(profileMeta(profile))}</small></span>
+          <label class="profile-row-toggle" aria-label="${profile.isActive ? "停用" : "启用"}${escapeHTML(profile.nickname || "这个用户")}">
+            <input type="checkbox" data-profile-toggle="${escapeHTML(profile.id)}" ${profile.isActive ? "checked" : ""}><i aria-hidden="true"></i>
+          </label>
+        </div>
+      </div>`).join("")
+    : `<div class="settings-empty user-profile-empty"><strong>还没有用户</strong><span>添加后，可以在每次解读前选择要使用的个人信息。</span></div>`;
+  return `<main class="user-manager">
+    <div class="user-manager-heading"><span class="eyebrow">PERSONAL CONTEXT</span><h1>用户信息</h1><p>${active ? `当前解读使用：${escapeHTML(active.nickname || "未命名用户")}` : "当前未使用任何用户信息。打开某位用户右侧的开关即可启用。"}</p></div>
+    <section class="user-profile-list" aria-label="用户列表">${rows}</section>
+    <p class="user-swipe-hint">左滑用户可编辑或删除；任何时候最多启用一位用户。</p>
+    <button id="add-user-profile" class="add-user-profile" type="button">＋ 添加用户</button>
+    <p id="settings-feedback" class="settings-feedback" role="status" aria-live="polite"></p>
+  </main>`;
+}
+
+function userProfileEditor() {
+  const profile = userProfiles.find((item) => item.id === editingUserId);
+  const editing = Boolean(profile);
+  const value = profile || { nickname: "", age: "", gender: "", zodiac: "", currentStatus: "", focusAreas: [] };
+  const zodiacOptions = ["", ...ZODIACS].map((zodiac) => `<option value="${zodiac}" ${value.zodiac === zodiac ? "selected" : ""}>${zodiac || "请选择星座"}</option>`).join("");
+  return `<main class="settings-detail-single"><section class="settings-editor" aria-label="${editing ? "编辑用户" : "添加用户"}">
+    <div class="settings-editor-heading"><div><span class="eyebrow">${editing ? "EDIT PROFILE" : "NEW PROFILE"}</span><h2>${editing ? "编辑用户" : "添加用户"}</h2></div></div>
+    <p class="settings-editor-intro">这些内容都可以不填。启用该用户后，实际填写的内容会成为塔罗师理解你处境的背景。</p>
+    <form id="user-profile-form" novalidate>
+      <div class="profile-fields">
+        <label class="settings-field"><span>昵称</span><input name="nickname" type="text" maxlength="80" autocomplete="nickname" placeholder="希望塔罗师怎么称呼你" value="${escapeHTML(value.nickname)}"></label>
+        <div class="profile-two-columns">
+          <label class="settings-field"><span>年龄</span><input name="age" type="text" maxlength="20" inputmode="numeric" placeholder="选填" value="${escapeHTML(value.age || "")}"></label>
+          <label class="settings-field"><span>性别</span><select name="gender"><option value="">请选择</option><option value="女" ${value.gender === "女" ? "selected" : ""}>女</option><option value="男" ${value.gender === "男" ? "selected" : ""}>男</option></select></label>
+        </div>
+        <label class="settings-field"><span>星座</span><select name="zodiac">${zodiacOptions}</select></label>
+        <label class="settings-field"><span>关注方向</span><input name="focusAreas" type="text" maxlength="300" autocomplete="off" placeholder="例如：感情、工作、自我成长" value="${escapeHTML(value.focusAreas.join("、"))}"><small>用逗号或顿号分开，最多 12 项。</small></label>
+        <label class="settings-field"><span>当前状态</span><textarea name="currentStatus" maxlength="1000" rows="7" placeholder="例如最近正在经历什么、在意什么，或生活处于什么阶段">${escapeHTML(value.currentStatus)}</textarea><small><span id="profile-status-count">${value.currentStatus.length}</span> / 1000</small></label>
+      </div>
+      <div class="settings-form-actions user-profile-form-actions">
+        <button class="settings-save settings-save-plain" type="submit">保存</button>
+        ${editing ? "<button class=\"delete-user-profile\" id=\"delete-user-profile\" type=\"button\">删除该用户</button>" : ""}
+      </div>
+      <p id="settings-feedback" class="settings-feedback" role="status" aria-live="polite"></p>
+    </form>
+    <p class="settings-storage-note">个人信息只保存在当前浏览器中。列表里未启用用户时，解读请求不会携带任何个人信息。</p>
+  </section></main>`;
+}
+
+function settingsHome() {
+  return `<main class="settings-home">
+    <div class="settings-home-heading"><span class="eyebrow">ARCANA SETTINGS</span><h1>设置</h1><p>管理解读模型，以及你愿意告诉塔罗师的个人背景。</p></div>
+    <section class="settings-home-group" aria-label="设置项目">
+      <button type="button" data-settings-section="providers"><span><strong>供应商</strong><small>添加、编辑或切换解读模型</small></span><em>${settings.providers.length} 个配置　›</em></button>
+      <button type="button" data-settings-section="profile-list"><span><strong>用户信息</strong><small>管理不同用户的个人背景</small></span><em>${userProfiles.find((profile) => profile.isActive)?.nickname ? `${escapeHTML(userProfiles.find((profile) => profile.isActive).nickname)}　›` : `${userProfiles.length} 位用户　›`}</em></button>
+    </section>
+  </main>`;
+}
+
+function providerSidebar() {
   return `<aside class="settings-sidebar">
-    <span class="eyebrow">ARCANA SETTINGS</span>
-    <h1>让每一次解读，<br><em>更像在和你说话。</em></h1>
-    <p>在这里选择解读模型，也可以补充愿意告诉塔罗师的个人背景。</p>
-    <nav class="settings-section-list" aria-label="设置模块">
-      <button class="${activeSection === "providers" ? "is-selected" : ""}" type="button" data-settings-section="providers"><span>供应商</span><small>${settings.providers.length} 个配置</small></button>
-      <button class="${activeSection === "profile" ? "is-selected" : ""}" type="button" data-settings-section="profile"><span>用户信息</span><small>${userInfo.enabled ? "已启用" : "已关闭"}</small></button>
-    </nav>
-    ${activeSection === "providers" ? `<div class="settings-list-heading"><strong>已添加</strong><button id="new-provider" type="button">＋ 添加</button></div><div class="provider-list">${providerList()}</div><p class="settings-sidebar-note">未选择页面供应商时，使用服务端 .env 中的默认配置。</p>${settings.activeId ? "<button id=\"use-server-default\" class=\"settings-server-link\" type=\"button\">改用服务端默认配置 →</button>" : ""}` : ""}
+    <span class="eyebrow">PROVIDERS</span>
+    <h1>供应商</h1>
+    <p>选择负责解读和继续对话的模型。</p>
+    <div class="settings-list-heading"><strong>已添加</strong><button id="new-provider" type="button">＋ 添加</button></div>
+    <div class="provider-list">${providerList()}</div>
+    <p class="settings-sidebar-note">未选择页面供应商时，使用服务端 .env 中的默认配置。</p>
+    ${settings.activeId ? "<button id=\"use-server-default\" class=\"settings-server-link\" type=\"button\">改用服务端默认配置 →</button>" : ""}
   </aside>`;
 }
 
 function renderSettings(message = "") {
   const overlay = document.querySelector("#provider-settings");
   if (!overlay) return;
+  const home = activeSection === "home";
+  let content = settingsHome();
+  if (activeSection === "providers") content = `<div class="settings-layout">${providerSidebar()}<section class="settings-editor" aria-label="供应商配置">${providerEditor()}</section></div>`;
+  if (activeSection === "profile-list") content = userManager();
+  if (activeSection === "profile-edit") content = userProfileEditor();
   overlay.innerHTML = `<div class="settings-page">
-    <header class="settings-header"><span class="settings-brand"><span aria-hidden="true"></span> ARCANA <small>/ SETTINGS</small></span><button id="close-settings" type="button">← 返回抽牌</button></header>
-    <div class="settings-layout">${settingsSidebar()}<section class="settings-editor" aria-label="${activeSection === "providers" ? "供应商配置" : "用户信息"}">${activeSection === "providers" ? providerEditor() : userInfoEditor()}</section></div>
+    <header class="settings-header"><span class="settings-brand"><span aria-hidden="true"></span> ARCANA <small>/ SETTINGS</small></span><button id="settings-back" type="button">${home ? "← 返回抽牌" : "← 返回设置"}</button></header>
+    ${content}
   </div>`;
-  overlay.querySelector("#close-settings").addEventListener("click", closeSettings);
+  overlay.querySelector("#settings-back").addEventListener("click", () => {
+    if (home) closeSettings();
+    else if (activeSection === "profile-edit") { activeSection = "profile-list"; editingUserId = null; renderSettings(); }
+    else { activeSection = "home"; pendingDeleteId = null; renderSettings(); }
+  });
   overlay.querySelectorAll("[data-settings-section]").forEach((button) => button.addEventListener("click", () => {
     activeSection = button.dataset.settingsSection;
     pendingDeleteId = null;
     renderSettings();
   }));
-  if (activeSection === "profile") bindUserInfoEditor(overlay);
-  else bindProviderEditor(overlay);
+  if (activeSection === "profile-list") bindUserManager(overlay);
+  if (activeSection === "profile-edit") bindUserProfileEditor(overlay);
+  if (activeSection === "providers") bindProviderEditor(overlay);
   if (message) showFeedback(message);
 }
 
-function bindUserInfoEditor(overlay) {
-  const enabled = overlay.querySelector("#profile-enabled");
-  const fields = overlay.querySelector("#profile-fields");
-  const form = overlay.querySelector("#user-info-form");
-  const formValue = () => ({
-    enabled: enabled.checked,
-    nickname: form.elements.nickname.value.trim(),
-    age: form.elements.age.value.trim(),
-    gender: form.elements.gender.value,
-    zodiac: form.elements.zodiac.value,
-    status: form.elements.status.value.trim(),
+function bindUserManager(overlay) {
+  overlay.querySelector("#add-user-profile").addEventListener("click", () => {
+    editingUserId = null;
+    activeSection = "profile-edit";
+    renderSettings();
   });
-  enabled.addEventListener("change", () => {
-    fields.disabled = !enabled.checked;
-    if (persistUserInfo(formValue())) {
-      const label = overlay.querySelector('[data-settings-section="profile"] small');
-      if (label) label.textContent = enabled.checked ? "已启用" : "已关闭";
-      showFeedback(enabled.checked ? "个人信息已启用。" : "个人信息已关闭，解读时不会发送这些内容。");
-    }
+  overlay.querySelectorAll("[data-profile-toggle]").forEach((input) => input.addEventListener("change", () => {
+    const id = input.dataset.profileToggle;
+    const next = userProfiles.map((profile) => ({ ...profile, isActive: input.checked && profile.id === id }));
+    if (persistProfiles(next)) renderSettings(input.checked ? "已启用这位用户的信息。" : "已关闭个人信息，解读时不会发送这些内容。");
+  }));
+  overlay.querySelectorAll("[data-profile-edit]").forEach((button) => button.addEventListener("click", () => {
+    editingUserId = button.dataset.profileEdit;
+    activeSection = "profile-edit";
+    renderSettings();
+  }));
+  overlay.querySelectorAll("[data-profile-delete]").forEach((button) => button.addEventListener("click", () => {
+    const profile = userProfiles.find((item) => item.id === button.dataset.profileDelete);
+    if (!profile) return;
+    if (persistProfiles(userProfiles.filter((item) => item.id !== profile.id))) renderSettings(`${profile.nickname || "该用户"}已删除。`);
+  }));
+  bindProfileSwipe(overlay);
+}
+
+function bindProfileSwipe(overlay) {
+  let openRow = null;
+  overlay.querySelectorAll(".user-profile-row").forEach((row) => {
+    const surface = row.querySelector(".user-profile-surface");
+    let startX = 0;
+    let startY = 0;
+    let offset = 0;
+    let dragging = false;
+    surface.addEventListener("pointerdown", (event) => {
+      if (event.target.closest(".profile-row-toggle")) return;
+      if (openRow && openRow !== row) openRow.classList.remove("is-open");
+      startX = event.clientX;
+      startY = event.clientY;
+      offset = row.classList.contains("is-open") ? -140 : 0;
+      dragging = true;
+      surface.setPointerCapture(event.pointerId);
+    });
+    surface.addEventListener("pointermove", (event) => {
+      if (!dragging) return;
+      const dx = event.clientX - startX;
+      const dy = event.clientY - startY;
+      if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 8) { dragging = false; surface.style.transform = ""; return; }
+      const x = Math.max(-140, Math.min(0, offset + dx));
+      surface.style.transform = `translateX(${x}px)`;
+    });
+    const finish = (event) => {
+      if (!dragging) return;
+      dragging = false;
+      const moved = event.clientX - startX;
+      const shouldOpen = offset + moved < -45;
+      surface.style.transform = "";
+      row.classList.toggle("is-open", shouldOpen);
+      openRow = shouldOpen ? row : null;
+    };
+    surface.addEventListener("pointerup", finish);
+    surface.addEventListener("pointercancel", () => { dragging = false; surface.style.transform = ""; });
   });
-  const status = overlay.querySelector('[name="status"]');
+}
+
+function bindUserProfileEditor(overlay) {
+  const form = overlay.querySelector("#user-profile-form");
+  const status = form.elements.currentStatus;
   status.addEventListener("input", () => { overlay.querySelector("#profile-status-count").textContent = status.value.length; });
   form.addEventListener("submit", (event) => {
     event.preventDefault();
-    const next = formValue();
-    if (persistUserInfo(next)) renderSettings(next.enabled ? "个人信息已保存，之后的解读会使用已填写内容。" : "个人信息已保存并关闭，解读时不会发送这些内容。");
+    const existing = userProfiles.find((profile) => profile.id === editingUserId);
+    const focusAreas = [...new Set(form.elements.focusAreas.value.split(/[，,、]/).map((item) => item.trim().slice(0, 40)).filter(Boolean))].slice(0, 12);
+    const record = {
+      id: existing?.id || makeId(),
+      nickname: form.elements.nickname.value.trim(),
+      age: form.elements.age.value.trim(),
+      gender: form.elements.gender.value,
+      zodiac: form.elements.zodiac.value,
+      currentStatus: status.value.trim(),
+      focusAreas,
+      isActive: existing?.isActive ?? !userProfiles.some((profile) => profile.isActive),
+    };
+    const next = existing
+      ? userProfiles.map((profile) => profile.id === existing.id ? record : profile)
+      : [...userProfiles, record];
+    if (persistProfiles(next)) {
+      editingUserId = null;
+      activeSection = "profile-list";
+      renderSettings("用户信息已保存。");
+    }
+  });
+  overlay.querySelector("#delete-user-profile")?.addEventListener("click", () => {
+    const profile = userProfiles.find((item) => item.id === editingUserId);
+    if (!profile) return;
+    if (persistProfiles(userProfiles.filter((item) => item.id !== profile.id))) {
+      editingUserId = null;
+      activeSection = "profile-list";
+      renderSettings(`${profile.nickname || "该用户"}已删除。`);
+    }
   });
 }
 
@@ -322,14 +489,15 @@ function deleteProvider() {
 function closeSettings() {
   document.querySelector("#provider-settings")?.remove();
   pendingDeleteId = null;
+  editingUserId = null;
   document.body.classList.remove("settings-open");
   document.querySelector(".site-shell").inert = false;
   document.querySelector(".wordmark")?.focus();
 }
 
-export function openSettings(section = "providers") {
+export function openSettings(section = "home") {
   if (document.querySelector("#provider-settings")) return;
-  activeSection = section;
+  activeSection = section === "profile" ? "profile-list" : section;
   const overlay = document.createElement("div");
   overlay.id = "provider-settings";
   overlay.className = "settings-overlay";
@@ -340,7 +508,7 @@ export function openSettings(section = "providers") {
   document.body.classList.add("settings-open");
   document.querySelector(".site-shell").inert = true;
   renderSettings();
-  overlay.querySelector("#close-settings")?.focus();
+  overlay.querySelector("#settings-back")?.focus();
 }
 
 export function initializeProviderSettings(callback = () => {}) {
@@ -348,9 +516,9 @@ export function initializeProviderSettings(callback = () => {}) {
   document.querySelector(".wordmark")?.addEventListener("click", (event) => { event.preventDefault(); openSettings(); });
   window.addEventListener("keydown", (event) => { if (event.key === "Escape" && document.querySelector("#provider-settings")) closeSettings(); });
   window.addEventListener("storage", (event) => {
-    if (![PROVIDER_STORAGE_KEY, PROFILE_STORAGE_KEY].includes(event.key)) return;
+    if (![PROVIDER_STORAGE_KEY, PROFILE_STORAGE_KEY, LEGACY_PROFILE_STORAGE_KEY].includes(event.key)) return;
     settings = loadSettings();
-    userInfo = loadUserInfo();
+    userProfiles = loadProfiles();
     if (!settings.providers.some((item) => item.id === selectedId)) selectedId = settings.activeId || settings.providers[0]?.id || null;
     onChange();
     renderSettings();

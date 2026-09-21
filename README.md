@@ -17,7 +17,7 @@ python3 -m venv .venv
 .venv/bin/python app.py
 ```
 
-在浏览器打开 `http://127.0.0.1:4173/`。点击左上角 **ARCANA 设置**，添加供应商并填写名称、API Base URL、API Key，再点“获取模型”从列表选择模型；如果供应商不支持模型列表，也可手动填写模型名。最后点击“添加并使用”。以后可以在同一页面添加多个供应商并切换。再次运行时，只需执行启动命令。结束服务时按 `Control + C`。
+在浏览器打开 `http://127.0.0.1:4173/`。点击左上角 **ARCANA 设置**，可以分别进入“供应商”和“用户信息”。供应商页面填写名称、API Base URL、API Key，再点“获取模型”从列表选择模型；如果供应商不支持模型列表，也可手动填写模型名。用户信息页面可以保存多人资料，并用每行右侧开关选择本次解读使用的用户；全部关闭时不会发送个人信息。再次运行时，只需执行启动命令。结束服务时按 `Control + C`。
 
 请用上面的本地网址打开，不能直接双击 `index.html`：`file://` 页面无法连接 Flask 解读接口。
 
@@ -45,4 +45,4 @@ LLM_MODEL=中转站支持的模型名
 - `llm.py`：向 OpenAI 兼容格式的中转站发起请求；密钥只保存在后端环境变量中。
 - `prompts/system.md`：解读师的语气和解读原则。
 
-`POST /api/models` 使用供应商的 `/models` 接口拉取模型名。`POST /api/reading` 接收 `question`、`spread`、`cards`、`userInfo`，以及可选的 `provider`。三牌阵只调用一次模型：模型先选择六种解读框架之一，前端再更新牌位标题。首次解读会返回 `conversationId`。`POST /api/follow-up` 使用这个编号读取完整历史，并允许每次请求传入新的供应商配置；一副牌最多追问 8 轮。对话暂存在 Flask 进程内，服务重启或超过 6 小时后需要重新抽牌。所有文字都通过 SSE 流式返回；请求开始前的错误返回 `{"error":"具体原因"}`。
+`POST /api/models` 使用供应商的 `/models` 接口拉取模型名。`POST /api/reading` 接收 `question`、`spread`、`cards`、`userInfo`，以及可选的 `provider`。三牌阵只调用一次模型：模型先选择六种解读框架之一，前端再更新牌位标题。首次解读会返回 `conversationId`。`POST /api/follow-up` 使用这个编号读取完整历史，并允许每次请求传入新的供应商配置；一副牌最多追问 8 轮。用户也可以通过 `POST /api/conversation/end` 提前结束本次对话。对话暂存在 Flask 进程内，服务重启或超过 6 小时后需要重新抽牌。所有文字都通过 SSE 流式返回；请求开始前的错误返回 `{"error":"具体原因"}`。
