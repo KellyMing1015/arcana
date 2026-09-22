@@ -17,6 +17,9 @@ const state = {
   conversationId: null,
   followUpCount: 0,
   initialProvider: null,
+  initialReading: "",
+  chatMessages: [],
+  conversationClosed: false,
 };
 const labels = {
   1: ["此刻"],
@@ -35,6 +38,7 @@ const timers = new Set();
 let shuffleInterval = null;
 let armedAtDown = null;
 let cutListeners = null;
+let stageListeners = null;
 let fanZones = [];
 
 function later(callback, milliseconds) {
@@ -52,6 +56,8 @@ function clearTimers() {
   shuffleInterval = null;
   cutListeners?.abort();
   cutListeners = null;
+  stageListeners?.abort();
+  stageListeners = null;
   fanZones = [];
 }
 
@@ -77,6 +83,8 @@ function positionLabels() {
 function go(stage) {
   clearTimers();
   state.stage = stage;
+  document.body.classList.toggle("result-open", stage === "result");
+  document.body.classList.toggle("conversation-open", stage === "conversation");
   render();
 }
 
@@ -138,6 +146,9 @@ function renderQuestion() {
     state.conversationId = null;
     state.followUpCount = 0;
     state.initialProvider = null;
+    state.initialReading = "";
+    state.chatMessages = [];
+    state.conversationClosed = false;
     go("shuffle");
   });
 }
@@ -542,27 +553,14 @@ function resultCard(card, index) {
 function createReadingOutput(actions) {
   const output = document.createElement("section");
   output.id = "reading-output";
+  output.className = "reading-output";
   output.setAttribute("role", "region");
   output.setAttribute("aria-label", "塔罗解读");
-  Object.assign(output.style, {
-    width: "min(100% - 44px, 760px)",
-    margin: "0 auto 72px",
-    padding: "26px clamp(20px, 4vw, 38px)",
-    border: "1px solid #dedbd4",
-    borderRadius: "3px",
-    background: "#fffdfa",
-    color: "#33342f",
-    fontSize: "15px",
-    lineHeight: "1.9",
-    textAlign: "left",
-    whiteSpace: "pre-wrap",
-    minHeight: "110px",
-  });
-  actions.after(output);
+  actions.before(output);
   return output;
 }
 
-async function streamToOutput(response, output, onPayload = () => {}) {
+async function streamToOutput(response, output, onPayload = () => {}, onFirstContent = () => {}) {
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
     throw new Error(payload.error || `请求失败（${response.status}）。`);
@@ -578,6 +576,7 @@ async function streamToOutput(response, output, onPayload = () => {}) {
   let done = false;
   let typing = false;
   let failed = false;
+  let hasContent = false;
   const characters = [];
   let resolveTyping;
   const typingFinished = new Promise((resolve) => { resolveTyping = resolve; });
@@ -587,6 +586,9 @@ async function streamToOutput(response, output, onPayload = () => {}) {
     if (characters.length) {
       rendered += characters.shift();
       output.textContent = rendered;
+      if (output.classList.contains("reading-output")) output.scrollTop = output.scrollHeight;
+      const messages = output.closest(".conversation-messages");
+      if (messages) messages.scrollTop = messages.scrollHeight;
       requestAnimationFrame(typeNext);
     } else {
       typing = false;
@@ -594,6 +596,10 @@ async function streamToOutput(response, output, onPayload = () => {}) {
     }
   }
   function queueText(text) {
+    if (!hasContent && text) {
+      hasContent = true;
+      onFirstContent();
+    }
     characters.push(...text);
     if (!typing) {
       typing = true;
@@ -637,6 +643,7 @@ async function streamToOutput(response, output, onPayload = () => {}) {
     if (buffer.trim()) readEvent(buffer);
     if (!done) throw new Error("解读连接提前结束，请重试。");
     await typingFinished;
+    return rendered;
   } catch (error) {
     failed = true;
     characters.length = 0;
@@ -647,7 +654,7 @@ async function streamToOutput(response, output, onPayload = () => {}) {
   }
 }
 
-async function fetchReading(output) {
+async function fetchReading(output, onFirstContent) {
   const provider = state.initialProvider;
   const response = await fetch("/api/reading", {
     method: "POST",
@@ -665,7 +672,7 @@ async function fetchReading(output) {
       ...(provider ? { provider } : {}),
     }),
   });
-  await streamToOutput(response, output, (payload) => {
+  const reading = await streamToOutput(response, output, (payload) => {
     if (payload.conversationId) state.conversationId = payload.conversationId;
     if (payload.framework && state.spread === 3) {
       if (!threeCardFrameworks[payload.framework]) throw new Error("模型返回了无法识别的三牌框架。");
@@ -674,8 +681,9 @@ async function fetchReading(output) {
         element.textContent = threeCardFrameworks[payload.framework][index];
       });
     }
-  });
+  }, onFirstContent);
   if (!state.conversationId) throw new Error("解读服务没有建立对话，请重新解读。");
+  return reading;
 }
 
 async function fetchFollowUp(message, output) {
@@ -710,31 +718,50 @@ function refreshResultProviderSelect() {
   select.value = choices.find((item) => item.active)?.id || "";
 }
 
-function createFollowUpPanel(output) {
-  const panel = document.createElement("section");
-  panel.id = "follow-up-panel";
-  panel.className = "follow-up-panel";
-  panel.innerHTML = `<div class="follow-up-heading"><span class="eyebrow">KEEP TALKING</span><h2>继续和塔罗师聊聊</h2><p>她会带着这次牌面和前面的全部对话继续回应。</p></div>
-    <div class="chat-window">
-      <div class="chat-window-bar"><span class="chat-presence" aria-hidden="true"></span><strong>Arcana 塔罗师</strong><small id="follow-up-count">还可以追问 8 轮</small></div>
-      <div id="follow-up-messages" class="follow-up-messages" aria-live="polite"></div>
-      <form id="follow-up-form" class="follow-up-form">
-        <label class="sr-only" for="follow-up-input">继续追问</label>
-        <textarea id="follow-up-input" maxlength="2000" rows="3" placeholder="把你还没说完的话写在这里……"></textarea>
-        <div class="follow-up-controls"><p id="follow-up-status" class="follow-up-status" role="status"></p><div class="follow-up-buttons"><button id="end-conversation" class="end-conversation" type="button">结束对话</button><button class="send-follow-up" type="submit">发送</button></div></div>
-      </form>
-    </div>`;
-  output.after(panel);
-  bindFollowUpForm(panel);
-  return panel;
+function conversationBubble(message) {
+  const user = message.role === "user";
+  const errorClass = message.error ? " is-error" : "";
+  const body = `<div class="chat-message-body"><small>${user ? "你" : "塔罗师"}</small><div class="chat-bubble"><p>${escapeHTML(message.text)}</p></div></div>`;
+  const avatar = `<span class="chat-avatar ${user ? "chat-avatar-user" : "chat-avatar-reader"}" aria-hidden="true">${user ? "你" : "A"}</span>`;
+  return `<article class="conversation-message ${user ? "conversation-user" : "conversation-reader"}${errorClass}">${user ? `${body}${avatar}` : `${avatar}${body}`}</article>`;
 }
 
-function bindFollowUpForm(panel) {
-  const form = panel.querySelector("#follow-up-form");
-  const input = panel.querySelector("#follow-up-input");
+function drawerCard(card, index) {
+  return `<article class="drawer-card">
+    <div class="drawer-card-face" style="--drawer-rotation:${card.reversed ? 180 : 0}deg">${cardFace(card)}</div>
+    <span>${escapeHTML(positionLabels()[index])}</span><strong>${escapeHTML(card.chinese)}</strong><small>${card.reversed ? "逆位" : "正位"}</small>
+  </article>`;
+}
+
+function readingDrawerHTML() {
+  return `<div class="reading-drawer-backdrop" id="reading-drawer" hidden>
+    <aside class="reading-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="reading-drawer-title">
+      <header class="reading-drawer-header"><div><span class="eyebrow">THE READING</span><h2 id="reading-drawer-title">牌面与解读</h2></div><button id="close-reading-drawer" type="button" aria-label="关闭牌面与解读">关闭</button></header>
+      <div class="reading-drawer-content">
+        <section class="drawer-question"><small>你的问题</small><p>“${escapeHTML(state.question)}”</p></section>
+        <section class="drawer-cards drawer-cards-${state.spread}" aria-label="本次牌面">${state.selected.map(drawerCard).join("")}</section>
+        <section class="drawer-reading"><small>完整解读</small><p>${escapeHTML(state.initialReading)}</p></section>
+      </div>
+    </aside>
+  </div>`;
+}
+
+function appendConversationMessage(messages, message) {
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = conversationBubble(message);
+  const element = wrapper.firstElementChild;
+  messages.append(element);
+  messages.scrollTop = messages.scrollHeight;
+  return element.querySelector("p");
+}
+
+function bindConversationForm(screen) {
+  const form = screen.querySelector("#follow-up-form");
+  const input = form.querySelector("#follow-up-input");
   const button = form.querySelector(".send-follow-up");
   const endButton = form.querySelector("#end-conversation");
-  const status = panel.querySelector("#follow-up-status");
+  const status = screen.querySelector("#follow-up-status");
+  const messages = screen.querySelector("#conversation-messages");
   endButton.addEventListener("click", async () => {
     input.disabled = true;
     button.disabled = true;
@@ -747,9 +774,13 @@ function bindFollowUpForm(panel) {
         body: JSON.stringify({ conversationId: state.conversationId }),
       });
     } catch {
-      // The local interface still closes even if the server was already unavailable.
+      // Even if the local service is gone, the visible conversation still closes.
     } finally {
       state.conversationId = null;
+      state.conversationClosed = true;
+      const closing = { role: "assistant", text: "这次牌已经收好。剩下的答案，要交给你接下来的选择。" };
+      state.chatMessages.push(closing);
+      appendConversationMessage(messages, closing);
       form.classList.add("is-closed");
       input.placeholder = "这次对话已经结束";
       status.textContent = "这次牌已经收好。想聊新的议题时，可以重新抽牌。";
@@ -758,28 +789,25 @@ function bindFollowUpForm(panel) {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const message = input.value.trim();
-    if (!message || state.followUpCount >= 8) { input.focus(); return; }
+    if (!message || state.followUpCount >= 8 || state.conversationClosed) { input.focus(); return; }
     input.value = "";
     input.disabled = true;
     button.disabled = true;
     endButton.disabled = true;
     status.textContent = "塔罗师正在回应...";
-    const messages = panel.querySelector("#follow-up-messages");
-    const userMessage = document.createElement("article");
-    userMessage.className = "conversation-message conversation-user";
-    userMessage.innerHTML = `<div class="chat-message-body"><small>你</small><div class="chat-bubble"><p>${escapeHTML(message)}</p></div></div><span class="chat-avatar chat-avatar-user" aria-hidden="true">你</span>`;
-    const answer = document.createElement("article");
-    answer.className = "conversation-message conversation-reader";
-    answer.innerHTML = `<span class="chat-avatar chat-avatar-reader" aria-hidden="true">A</span><div class="chat-message-body"><small>塔罗师</small><div class="chat-bubble"><p>塔罗师正在回应...</p></div></div>`;
-    messages.append(userMessage, answer);
-    answer.scrollIntoView({ behavior: "smooth", block: "center" });
-    const answerText = answer.querySelector("p");
+    const userRecord = { role: "user", text: message };
+    const answerRecord = { role: "assistant", text: "" };
+    state.chatMessages.push(userRecord, answerRecord);
+    appendConversationMessage(messages, userRecord);
+    const answerText = appendConversationMessage(messages, { role: "assistant", text: "塔罗师正在回应..." });
     try {
       answerText.textContent = "";
       const completion = await fetchFollowUp(message, answerText);
+      answerRecord.text = answerText.textContent;
       const remaining = Math.max(0, 8 - state.followUpCount);
-      panel.querySelector("#follow-up-count").textContent = remaining ? `还可以追问 ${remaining} 轮` : "本次牌局已完成 8 轮追问";
+      screen.querySelector("#follow-up-count").textContent = remaining ? `还可以追问 ${remaining} 轮` : "本次牌局已完成 8 轮追问";
       if (completion.closed) {
+        state.conversationClosed = true;
         input.disabled = true;
         input.placeholder = "这次牌局已经收牌";
         button.disabled = true;
@@ -790,12 +818,14 @@ function bindFollowUpForm(panel) {
       }
       status.textContent = "";
     } catch (error) {
-      answer.classList.add("is-error");
+      answerText.closest(".conversation-message").classList.add("is-error");
       answerText.textContent = error instanceof TypeError ? "暂时无法连接解读服务，请确认 Flask 已启动。" : (error.message || "回应失败，请稍后再试。");
+      answerRecord.text = answerText.textContent;
+      answerRecord.error = true;
       status.textContent = "这轮没有计入次数，你可以修改后重新发送。";
       input.value = message;
     } finally {
-      if (state.followUpCount < 8) {
+      if (!state.conversationClosed && state.followUpCount < 8) {
         input.disabled = false;
         button.disabled = false;
         endButton.disabled = false;
@@ -805,33 +835,81 @@ function bindFollowUpForm(panel) {
   });
 }
 
+function renderConversation() {
+  const remaining = Math.max(0, 8 - state.followUpCount);
+  const intro = [
+    { role: "user", text: state.question },
+    { role: "assistant", text: "这次牌面我已经读完了。你可以继续问我，牌面和完整解读收在右上角。" },
+  ];
+  app.innerHTML = `<section class="conversation-screen screen-enter">
+    <header class="conversation-page-header">
+      <button class="conversation-back" id="back-to-reading" type="button">← 解读</button>
+      <div class="conversation-title"><strong>Arcana 塔罗师</strong><small id="follow-up-count">${remaining ? `还可以追问 ${remaining} 轮` : "本次牌局已完成 8 轮追问"}</small></div>
+      <div class="conversation-header-actions">
+        <label class="conversation-provider"><span>供应商</span><select id="result-provider" aria-label="切换后续对话使用的供应商">${providerOptionsHTML()}</select></label>
+        <button class="reading-drawer-toggle" id="open-reading-drawer" type="button" aria-label="查看牌面与完整解读"><span class="mini-card-icon" aria-hidden="true"></span></button>
+      </div>
+    </header>
+    <div class="conversation-messages" id="conversation-messages" aria-live="polite">${[...intro, ...state.chatMessages].map(conversationBubble).join("")}</div>
+    <form id="follow-up-form" class="conversation-compose ${state.conversationClosed ? "is-closed" : ""}">
+      <label class="sr-only" for="follow-up-input">继续追问</label>
+      <textarea id="follow-up-input" maxlength="2000" rows="1" placeholder="${state.conversationClosed ? "这次牌局已经收牌" : "把你还没说完的话写在这里……"}" ${state.conversationClosed ? "disabled" : ""}></textarea>
+      <div class="conversation-compose-actions"><p id="follow-up-status" class="follow-up-status" role="status">${state.conversationClosed ? "这次对话已经结束。" : ""}</p><button id="end-conversation" class="end-conversation" type="button" ${state.conversationClosed ? "disabled" : ""}>结束对话</button><button class="send-follow-up" type="submit" ${state.conversationClosed ? "disabled" : ""}>发送</button></div>
+    </form>
+  </section>${readingDrawerHTML()}`;
+  refreshResultProviderSelect();
+  const screen = document.querySelector(".conversation-screen");
+  const messages = screen.querySelector("#conversation-messages");
+  messages.scrollTop = messages.scrollHeight;
+  screen.querySelector("#back-to-reading").addEventListener("click", () => go("result"));
+  screen.querySelector("#result-provider").addEventListener("change", (event) => {
+    if (!setActiveProvider(event.currentTarget.value)) { refreshResultProviderSelect(); return; }
+    screen.querySelector("#follow-up-status").textContent = `后续追问将使用：${getActiveProviderLabel()}`;
+  });
+  const drawer = document.querySelector("#reading-drawer");
+  const openDrawer = () => { drawer.hidden = false; screen.inert = true; document.querySelector("#close-reading-drawer").focus(); };
+  const closeDrawer = () => { drawer.hidden = true; screen.inert = false; screen.querySelector("#open-reading-drawer").focus(); };
+  screen.querySelector("#open-reading-drawer").addEventListener("click", openDrawer);
+  document.querySelector("#close-reading-drawer").addEventListener("click", closeDrawer);
+  drawer.addEventListener("click", (event) => { if (event.target === drawer) closeDrawer(); });
+  stageListeners = new AbortController();
+  window.addEventListener("keydown", (event) => { if (event.key === "Escape" && !drawer.hidden) closeDrawer(); }, { signal: stageListeners.signal });
+  bindConversationForm(screen);
+}
+
 function renderResult() {
   app.innerHTML = `<section class="ritual-screen result-screen screen-enter">
-    <div class="ritual-top result-top"><button class="ritual-back" id="start-over">← 重新开始</button><span>04 / 04 — 你的牌阵</span><label class="result-provider-switch" hidden><span>切换供应商</span><select id="result-provider" aria-label="切换后续对话使用的供应商">${providerOptionsHTML()}</select></label></div>
+    <div class="ritual-top result-top"><button class="ritual-back" id="start-over">← 重新开始</button><span>04 / 04 — 你的牌阵</span></div>
     <div class="result-heading"><span class="eyebrow">YOUR CARDS HAVE FOUND THEIR PLACE</span><h1>你的牌，已经来到面前。</h1><p>“${escapeHTML(state.question)}”</p></div>
     <div class="result-layout result-layout-${state.spread}">${state.selected.map(resultCard).join("")}</div>
-    <div class="result-actions"><button class="ritual-primary" id="interpret" type="button">开始解读 <span aria-hidden="true">↗</span></button><p>解读会逐字出现，完成后可以继续追问 8 轮。</p></div>
+    <div class="result-actions"><button class="ritual-primary" id="interpret" type="button">开始解读 <span aria-hidden="true">↗</span></button><p>解读会在固定区域内展开，完成后可以继续对话。</p></div>
   </section>`;
-  refreshResultProviderSelect();
   document.querySelector("#start-over").addEventListener("click", () => {
     state.question = "";
     state.conversationId = null;
     state.followUpCount = 0;
     state.initialProvider = null;
+    state.initialReading = "";
+    state.chatMessages = [];
+    state.conversationClosed = false;
     go("question");
-  });
-  document.querySelector("#result-provider").addEventListener("change", (event) => {
-    if (!setActiveProvider(event.currentTarget.value)) {
-      refreshResultProviderSelect();
-      return;
-    }
-    const status = document.querySelector("#follow-up-status");
-    if (status && state.conversationId) status.textContent = `后续追问将使用：${getActiveProviderLabel()}`;
   });
   const button = document.querySelector("#interpret");
   const actions = document.querySelector(".result-actions");
+  if (state.initialReading) {
+    document.querySelector(".result-screen").classList.add("has-reading");
+    const output = createReadingOutput(actions);
+    output.textContent = state.initialReading;
+    output.scrollTop = 0;
+    button.textContent = state.conversationClosed ? "重新开始" : "继续对话";
+    button.dataset.action = state.conversationClosed ? "restart" : "conversation";
+  }
   button.addEventListener("click", async () => {
-    if (button.dataset.completed === "true") {
+    if (button.dataset.action === "conversation") {
+      go("conversation");
+      return;
+    }
+    if (button.dataset.action === "restart") {
       state.question = "";
       go("question");
       return;
@@ -843,28 +921,30 @@ function renderResult() {
       });
     }
     button.disabled = true;
-    button.firstChild.textContent = "解读中... ";
+    button.textContent = "解读中...";
+    const screen = document.querySelector(".result-screen");
     const output = document.querySelector("#reading-output") || createReadingOutput(actions);
-    output.textContent = "正在倾听你的问题…";
-    output.scrollIntoView({ behavior: "smooth", block: "start" });
+    const revealReading = () => screen.classList.add("has-reading");
+    output.textContent = "";
     try {
       state.conversationId = null;
       state.followUpCount = 0;
       state.initialProvider = getActiveProvider();
-      output.textContent = "";
-      await fetchReading(output);
-      button.firstChild.textContent = "再来一次 ";
-      button.dataset.completed = "true";
-      document.querySelector(".result-provider-switch").hidden = false;
-      createFollowUpPanel(output);
+      state.initialReading = "";
+      state.chatMessages = [];
+      state.conversationClosed = false;
+      state.initialReading = await fetchReading(output, revealReading);
+      button.textContent = "继续对话";
+      button.dataset.action = "conversation";
     } catch (error) {
+      revealReading();
       const message = error instanceof TypeError
         ? "暂时无法连接解读服务，请确认 Flask 已启动。"
         : error.message?.includes("请先设置环境变量")
           ? "还没有可用的模型。点击左上角 ARCANA 添加供应商，或在服务端设置 .env。"
         : (error.message || "解读暂时失败，请稍后重试。");
       output.textContent += `${output.textContent ? "\n\n" : ""}${message}`;
-      button.firstChild.textContent = "重新解读 ";
+      button.textContent = "重新解读";
     } finally {
       button.disabled = false;
     }
@@ -877,6 +957,7 @@ function render() {
   if (state.stage === "cut") renderCut();
   if (state.stage === "fan") renderFan();
   if (state.stage === "result") renderResult();
+  if (state.stage === "conversation") renderConversation();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
