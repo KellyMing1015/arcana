@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1500" viewBox="0 0 1000 1500" role="img" aria-labelledby="title desc">
+  <title id="title">Arcana 严格中心对称卡背</title>
+  <desc id="desc">紫色底、粉色圆润线条、上下蝴蝶结、中央星芒魔法阵和四角魔法纹章。</desc>
+  <rect width="1000" height="1500" fill="#756d8f"/>
+
+  <defs>
+    <g id="corner" fill="none" stroke="#e5adc6" stroke-width="14" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M58 208V112Q58 58 112 58H208"/>
+      <path d="M82 196V126Q82 82 126 82H196" stroke-width="5"/>
+      <path d="M74 174C74 136 96 116 128 116C157 116 168 96 150 79"/>
+      <path d="M104 184C104 158 120 145 142 145C163 145 174 131 165 116"/>
+      <path d="M174 72C190 72 202 83 202 98C202 113 190 124 174 124"/>
+      <path d="M126 62C126 78 115 90 100 90C85 90 74 78 74 62"/>
+      <path d="M92 114L108 130L92 146L76 130Z" fill="#f2d6df" stroke-width="7"/>
+      <circle cx="214" cy="72" r="7" fill="#f4dfd4" stroke="none"/>
+      <circle cx="234" cy="72" r="5" fill="#e5adc6" stroke="none"/>
+      <circle cx="72" cy="214" r="7" fill="#f4dfd4" stroke="none"/>
+      <circle cx="72" cy="234" r="5" fill="#e5adc6" stroke="none"/>
+    </g>
+
+    <g id="bow-top" fill="none" stroke="#e5adc6" stroke-width="18" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="474" y="105" width="52" height="64" rx="23" fill="#e5adc6" stroke="none"/>
+      <path d="M474 135C431 91 367 76 340 103C320 123 343 156 382 161C415 165 447 151 474 135Z"/>
+      <path d="M526 135C569 91 633 76 660 103C680 123 657 156 618 161C585 165 553 151 526 135Z"/>
+      <path d="M479 162C444 194 421 241 429 296C434 329 420 353 394 369"/>
+      <path d="M521 162C556 194 579 241 571 296C566 329 580 353 606 369"/>
+      <path d="M394 369L418 359" stroke-width="10"/>
+      <path d="M606 369L582 359" stroke-width="10"/>
+      <path d="M500 71V84M500 190V202" stroke-width="10"/>
+      <circle cx="500" cy="54" r="7" fill="#f4dfd4" stroke="none"/>
+      <path d="M500 214L510 234L530 244L510 254L500 274L490 254L470 244L490 234Z" fill="#e5adc6" stroke="none"/>
+    </g>
+
+    <g id="side-sparkles" fill="#e5adc6">
+      <circle cx="92" cy="382" r="7"/>
+      <circle cx="92" cy="412" r="5" fill="#f4dfd4"/>
+      <path d="M92 452L103 474L125 485L103 496L92 518L81 496L59 485L81 474Z"/>
+      <circle cx="92" cy="548" r="6"/>
+      <circle cx="92" cy="575" r="4" fill="#f4dfd4"/>
+      <circle cx="92" cy="925" r="4" fill="#f4dfd4"/>
+      <circle cx="92" cy="952" r="6"/>
+      <path d="M92 982L103 1004L125 1015L103 1026L92 1048L81 1026L59 1015L81 1004Z"/>
+      <circle cx="92" cy="1088" r="5" fill="#f4dfd4"/>
+      <circle cx="92" cy="1118" r="7"/>
+    </g>
+  </defs>
+
+  <!-- 四个角全部来自同一组路径，并通过精确矩阵镜像。 -->
+  <use href="#corner"/>
+  <use href="#corner" transform="translate(1000 0) scale(-1 1)"/>
+  <use href="#corner" transform="translate(0 1500) scale(1 -1)"/>
+  <use href="#corner" transform="translate(1000 1500) scale(-1 -1)"/>
+
+  <!-- 上下蝴蝶结由同一对象旋转 180°生成。 -->
+  <use href="#bow-top"/>
+  <use href="#bow-top" transform="rotate(180 500 750)"/>
+
+  <!-- 两侧闪光采用严格水平镜像；组内上下坐标亦成对。 -->
+  <use href="#side-sparkles"/>
+  <use href="#side-sparkles" transform="translate(1000 0) scale(-1 1)"/>
+
+  <!-- 中央圆环使用完整闭合圆，不叠加任何会造成断口的元素。 -->
+  <circle cx="500" cy="750" r="278" fill="none" stroke="#e5adc6" stroke-width="18"/>
+  <circle cx="500" cy="750" r="244" fill="none" stroke="#e5adc6" stroke-width="7"/>
+
+  <g fill="#e5adc6">
+    <path d="M500 612C520 693 557 730 638 750C557 770 520 807 500 888C480 807 443 770 362 750C443 730 480 693 500 612Z"/>
+    <path d="M500 634L510 654L530 664L510 674L500 694L490 674L470 664L490 654Z" fill="#f2d6df"/>
+    <path d="M500 806L510 826L530 836L510 846L500 866L490 846L470 836L490 826Z" fill="#f2d6df"/>
+    <path d="M374 750L384 770L404 780L384 790L374 810L364 790L344 780L364 770Z" fill="#f2d6df" transform="translate(0 -30)"/>
+    <path d="M626 750L636 770L656 780L636 790L626 810L616 790L596 780L616 770Z" fill="#f2d6df" transform="translate(0 -30)"/>
+    <circle cx="500" cy="548" r="8" fill="#f4dfd4"/>
+    <circle cx="500" cy="952" r="8" fill="#f4dfd4"/>
+    <circle cx="298" cy="750" r="8" fill="#f4dfd4"/>
+    <circle cx="702" cy="750" r="8" fill="#f4dfd4"/>
+  </g>
+
+  <!-- 最外层双框均为无断口闭合矩形。 -->
+  <rect x="20" y="20" width="960" height="1460" rx="58" fill="none" stroke="#e5adc6" stroke-width="14"/>
+  <rect x="43" y="43" width="914" height="1414" rx="40" fill="none" stroke="#e5adc6" stroke-width="5"/>
+</svg>

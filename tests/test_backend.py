@@ -5,6 +5,7 @@ import json
 import os
 import socket
 import unittest
+from datetime import datetime
 from unittest.mock import patch
 from urllib.error import HTTPError
 
@@ -117,6 +118,38 @@ class ReadingTests(unittest.TestCase):
         self.assertIn("关注方向：产品、成长", captured[0])
         self.assertNotIn("昵称：小欧", captured[1])
 
+    def test_system_prompt_starts_with_current_shanghai_time(self):
+        fixed = datetime(2026, 9, 25, 14, 7, tzinfo=website.ZoneInfo("Asia/Shanghai"))
+        self.assertEqual(website.current_time_line(fixed), "当前时间：2026年9月25日 14:07，星期五")
+        with patch.object(website, "current_time_line", return_value="当前时间：固定时间"):
+            prompt = website.system_prompt_with_user_info(None)
+        self.assertTrue(prompt.startswith(f"当前时间：固定时间\n{website.TIME_REASONING_RULE}\n"))
+        self.assertIn("必须以第一行给出的东八区当前时间为唯一基准", prompt)
+
+    def test_current_time_refresh_does_not_duplicate_time_rule(self):
+        old_prompt = f"当前时间：旧时间\n{website.TIME_REASONING_RULE}\n原始规则"
+        with patch.object(website, "current_time_line", return_value="当前时间：新时间"):
+            refreshed = website.prompt_with_current_time(old_prompt)
+        self.assertEqual(
+            refreshed,
+            f"当前时间：新时间\n{website.TIME_REASONING_RULE}\n原始规则",
+        )
+
+    def test_summary_instruction_is_only_added_for_recorded_readings(self):
+        captured = []
+
+        def fake_upstream(messages, _provider):
+            captured.append(messages[1]["content"])
+            return io.BytesIO(b'data: {"choices":[{"delta":{"content":"ARCANA_FRAMEWORK:cause\\nanswer"}}]}\n\ndata: [DONE]\n\n')
+
+        with patch.object(website, "open_chat_stream", side_effect=fake_upstream):
+            self.client.post("/api/reading", json={**self.payload, "recordHistory": True, "userInfo": {"enabled": True, "id": "user-1", "nickname": "小欧"}}, buffered=True)
+            self.client.post("/api/reading", json={**self.payload, "recordHistory": False}, buffered=True)
+            self.client.post("/api/reading", json={**self.payload, "recordHistory": True, "userInfo": {"enabled": False}}, buffered=True)
+        self.assertIn("【总结】", captured[0])
+        self.assertNotIn("【总结】", captured[1])
+        self.assertNotIn("【总结】", captured[2])
+
     def test_follow_up_uses_full_history_and_can_switch_provider(self):
         calls = []
         streams = [
@@ -142,6 +175,38 @@ class ReadingTests(unittest.TestCase):
         self.assertEqual([item["role"] for item in history], ["system", "user", "assistant", "user"])
         self.assertEqual(history[-2]["content"], "initial reading")
         self.assertEqual(history[-1]["content"], "那我接下来先做什么？")
+
+    def test_follow_up_accepts_local_images_as_multimodal_content(self):
+        conversation_id = "c" * 32
+        website.CONVERSATIONS[conversation_id] = {
+            "messages": [{"role": "system", "content": website.SYSTEM_PROMPT}],
+            "rounds": 0,
+            "busy": False,
+            "updated_at": website.time.time(),
+        }
+        captured = []
+
+        def fake_upstream(messages, _provider):
+            captured.extend(messages)
+            return io.BytesIO(b'data: {"choices":[{"delta":{"content":"image answer"}}]}\n\ndata: [DONE]\n\n')
+
+        image = "data:image/jpeg;base64,YQ=="
+        with patch.object(website, "open_chat_stream", side_effect=fake_upstream):
+            response = self.client.post("/api/follow-up", json={"conversationId": conversation_id, "message": "看看这张图", "images": [image]}, buffered=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(captured[0]["content"].startswith("当前时间："))
+        content = captured[-1]["content"]
+        self.assertEqual(content[0], {"type": "text", "text": "看看这张图"})
+        self.assertEqual(content[1], {"type": "image_url", "image_url": {"url": image}})
+
+    def test_follow_up_rejects_more_than_three_images(self):
+        conversation_id = "d" * 32
+        website.CONVERSATIONS[conversation_id] = {
+            "messages": [], "rounds": 0, "busy": False, "updated_at": website.time.time(),
+        }
+        image = "data:image/png;base64,YQ=="
+        response = self.client.post("/api/follow-up", json={"conversationId": conversation_id, "message": "", "images": [image] * 4})
+        self.assertEqual(response.status_code, 400)
 
     def test_eighth_follow_up_closes_conversation_and_ninth_is_rejected(self):
         conversation_id = "a" * 32

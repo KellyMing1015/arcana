@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f5f4f1" />
+    <meta name="theme-color" content="#fbf5ea" />
     <title>Arcana — 为此刻抽一张牌</title>
     <meta name="description" content="Arcana 是一段从你的真实议题出发的塔罗体验。" />
     <link rel="stylesheet" href="./styles.css" />
@@ -16,16 +16,19 @@
           <span>ARCANA</span>
           <small class="wordmark-settings">设置</small>
         </a>
-        <span class="header-note">一场关于此刻的对话</span>
+        <span class="header-constellation" aria-hidden="true"><i></i><b></b><i></i></span>
         <span class="prototype-tag" id="provider-indicator">服务端默认配置</span>
       </header>
+
+      <div class="ambient-figures" aria-hidden="true">
+        <img class="ambient-rabbit" src="/assets/ui/rabbit-single-color.png" alt="">
+        <img class="ambient-dove" src="/assets/ui/dove-single-color.png" alt="">
+      </div>
 
       <main id="app" aria-live="polite"></main>
 
       <footer class="site-footer">
         <span>ARCANA © 2026</span>
-        <span>带着问题来，带着一点清晰离开。</span>
-        <span>用心设计的塔罗体验</span>
       </footer>
     </div>
     <script>

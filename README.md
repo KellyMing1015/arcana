@@ -39,6 +39,8 @@ LLM_MODEL=中转站支持的模型名
 
 - `index.html`、`styles.css`、`cards.js`、`app.js`：抽牌页面、78 张牌的资料和交互。
 - `assets/cards/`：从 Wikimedia Commons 下载的 78 张高清牌面，以及每张图的来源链接。牌面原画由 Pamela Colman Smith 绘制；该文件分类页将素材标为公有领域。网页使用 960 像素宽的 WebP 版本，以缩短加载时间。牌背仍使用原来的 Arcana 设计。
+- `assets/ui/card-back-cream-magic-v3.png`：抽牌流程统一使用的奶油魔法风卡背；侧边留白，保留四角与中央图案。
+- `assets/ui/rabbit-single-color.png`、`assets/ui/dove-single-color.png`：首页使用的单色兔子与鸽子装饰。
 - `scripts/fetch_card_art.py`：需要重新获取图片时运行；使用 `requirements.txt` 中的 Pillow。
 - `settings.js`：页面中的供应商和用户信息设置，数据保存在浏览器 localStorage。
 - `app.py`：Flask 网站、首次解读和继续追问接口，负责校验数据、保存当前牌局的对话历史并传送流式回复。

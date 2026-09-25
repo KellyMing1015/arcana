@@ -1,6 +1,7 @@
 const PROVIDER_STORAGE_KEY = "arcana.providers.v1";
 const PROFILE_STORAGE_KEY = "arcana.user-profiles.v2";
 const LEGACY_PROFILE_STORAGE_KEY = "arcana.user-info.v1";
+const HISTORY_STORAGE_PREFIX = "arcana_history_";
 const ZODIACS = ["白羊座", "金牛座", "双子座", "巨蟹座", "狮子座", "处女座", "天秤座", "天蝎座", "射手座", "摩羯座", "水瓶座", "双鱼座"];
 
 function escapeHTML(value) {
@@ -83,6 +84,7 @@ let userProfiles = loadProfiles();
 let selectedId = settings.activeId || settings.providers[0]?.id || null;
 let activeSection = "home";
 let editingUserId = null;
+let historyUserId = userProfiles.find((profile) => profile.isActive)?.id || userProfiles[0]?.id || null;
 let pendingDeleteId = null;
 let onChange = () => {};
 
@@ -146,6 +148,67 @@ export function getUserInfo() {
   return active ? { enabled: true, ...active } : { enabled: false };
 }
 
+function historyKey(userId) { return `${HISTORY_STORAGE_PREFIX}${userId}`; }
+
+function historyCutoff() {
+  const cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - 3);
+  return cutoff.getTime();
+}
+
+function normalizeHistoryRecords(value) {
+  if (!Array.isArray(value)) return [];
+  const cutoff = historyCutoff();
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object" || !Number.isFinite(item.createdAt) || item.createdAt < cutoff) return [];
+    if (typeof item.question !== "string" || typeof item.summary !== "string" || !Array.isArray(item.cards)) return [];
+    const cards = item.cards.flatMap((card) => {
+      if (!card || typeof card !== "object" || typeof card.id !== "string" || !/^[a-z0-9-]+$/.test(card.id)) return [];
+      return [{
+        id: card.id,
+        chinese: typeof card.chinese === "string" ? card.chinese.slice(0, 40) : "塔罗牌",
+        position: typeof card.position === "string" ? card.position.slice(0, 40) : "",
+        reversed: card.reversed === true,
+      }];
+    });
+    if (!cards.length) return [];
+    return [{
+      id: typeof item.id === "string" && item.id ? item.id : makeId(),
+      createdAt: item.createdAt,
+      timestamp: typeof item.timestamp === "string" ? item.timestamp.slice(0, 24) : "",
+      question: item.question.slice(0, 220),
+      spread: [1, 3, 10].includes(item.spread) ? item.spread : cards.length,
+      spreadLabel: typeof item.spreadLabel === "string" ? item.spreadLabel.slice(0, 20) : "牌阵",
+      // 历史记录以完整表达为先，不再在第 100 个字符处截断句子。
+      summary: item.summary.trim(),
+      cards,
+    }];
+  }).sort((a, b) => b.createdAt - a.createdAt);
+}
+
+function loadHistoryRecords(userId) {
+  if (!userId) return [];
+  try {
+    const raw = JSON.parse(localStorage.getItem(historyKey(userId)) || "[]");
+    const records = normalizeHistoryRecords(raw);
+    if (!Array.isArray(raw) || records.length !== raw.length) localStorage.setItem(historyKey(userId), JSON.stringify(records));
+    return records;
+  } catch {
+    return [];
+  }
+}
+
+export function saveHistoryRecord(userId, record) {
+  if (!userId || !record) return false;
+  try {
+    const records = normalizeHistoryRecords([...loadHistoryRecords(userId), record]);
+    localStorage.setItem(historyKey(userId), JSON.stringify(records));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function providerList() {
   if (!settings.providers.length) return `<div class="settings-empty">还没有供应商。先添加第一个。</div>`;
   return settings.providers.map((item) => `<button class="provider-list-item ${selectedId === item.id ? "is-selected" : ""}" type="button" data-provider-id="${escapeHTML(item.id)}">
@@ -170,7 +233,7 @@ function providerEditor() {
       <div class="settings-field"><label for="provider-model">模型名</label><span class="settings-model-row"><input id="provider-model" name="model" type="text" maxlength="200" autocomplete="off" placeholder="先点击获取模型，或手动输入" value="${escapeHTML(item?.model || "")}"><button id="fetch-models" type="button">获取模型</button></span><select id="fetched-models" class="settings-model-select" aria-label="从供应商模型列表选择" hidden><option value="">从列表中选择模型…</option></select><small>列表来自供应商；如果拉取失败，也可以直接填写模型名。</small></div>
     </div>
     <div class="settings-form-actions">
-      <button class="settings-save" type="submit">${editing ? "保存并使用" : "添加并使用"} <span aria-hidden="true">↗</span></button>
+      <button class="settings-save" type="submit">${editing ? "保存并使用" : "添加并使用"}</button>
       ${editing && settings.activeId !== item.id ? "<button class=\"settings-action-secondary\" id=\"activate-provider\" type=\"button\">设为当前供应商</button>" : ""}
       ${editing && pendingDeleteId === item.id
         ? "<button class=\"settings-delete\" id=\"confirm-delete-provider\" type=\"button\">确定删除</button><button class=\"settings-action-secondary\" id=\"cancel-delete-provider\" type=\"button\">取消</button>"
@@ -191,8 +254,8 @@ function userManager() {
   const rows = userProfiles.length
     ? userProfiles.map((profile) => `<div class="user-profile-row" data-profile-id="${escapeHTML(profile.id)}">
         <div class="user-profile-actions">
-          <button type="button" data-profile-edit="${escapeHTML(profile.id)}">编辑</button>
-          <button class="is-delete" type="button" data-profile-delete="${escapeHTML(profile.id)}">删除</button>
+          <button type="button" tabindex="-1" data-profile-edit="${escapeHTML(profile.id)}">编辑</button>
+          <button class="is-delete" type="button" tabindex="-1" data-profile-delete="${escapeHTML(profile.id)}">删除</button>
         </div>
         <div class="user-profile-surface">
           <span class="user-profile-copy"><strong>${escapeHTML(profile.nickname || "未命名用户")}</strong><small>${escapeHTML(profileMeta(profile))}</small></span>
@@ -205,7 +268,7 @@ function userManager() {
   return `<main class="user-manager">
     <div class="user-manager-heading"><span class="eyebrow">PERSONAL CONTEXT</span><h1>用户信息</h1><p>${active ? `当前解读使用：${escapeHTML(active.nickname || "未命名用户")}` : "当前未使用任何用户信息。打开某位用户右侧的开关即可启用。"}</p></div>
     <section class="user-profile-list" aria-label="用户列表">${rows}</section>
-    <p class="user-swipe-hint">左滑用户可编辑或删除；任何时候最多启用一位用户。</p>
+    <p class="user-swipe-hint">向左滑动用户可编辑或删除；任何时候最多启用一位用户。</p>
     <button id="add-user-profile" class="add-user-profile" type="button">＋ 添加用户</button>
     <p id="settings-feedback" class="settings-feedback" role="status" aria-live="polite"></p>
   </main>`;
@@ -246,7 +309,42 @@ function settingsHome() {
     <section class="settings-home-group" aria-label="设置项目">
       <button type="button" data-settings-section="providers"><span><strong>供应商</strong><small>添加、编辑或切换解读模型</small></span><em>${settings.providers.length} 个配置　›</em></button>
       <button type="button" data-settings-section="profile-list"><span><strong>用户信息</strong><small>管理不同用户的个人背景</small></span><em>${userProfiles.find((profile) => profile.isActive)?.nickname ? `${escapeHTML(userProfiles.find((profile) => profile.isActive).nickname)}　›` : `${userProfiles.length} 位用户　›`}</em></button>
+      <button type="button" data-settings-section="history"><span><strong>历史牌阵</strong><small>按用户查看过去三个月的解读</small></span><em>查看记录　›</em></button>
     </section>
+  </main>`;
+}
+
+function historyThumbnails(record) {
+  return `<div class="history-card-thumbnails ${record.spread === 10 ? "history-card-thumbnails-10" : ""}" aria-label="本次抽到的牌">${record.cards.map((card) => `<figure class="history-card-thumb"><img src="/assets/cards/${card.id}.webp" alt="${escapeHTML(card.chinese)}${card.reversed ? "逆位" : "正位"}" style="transform:rotate(${card.reversed ? 180 : 0}deg)"><figcaption>${escapeHTML(card.chinese)}</figcaption></figure>`).join("")}</div>`;
+}
+
+function historyTimeline(records) {
+  if (!records.length) return `<div class="history-empty"><span>◇</span><strong>还没有历史牌阵</strong><p>用这位用户完成一次完整解读后，记录会自动出现在这里。</p></div>`;
+  return `<section class="history-timeline" aria-label="历史牌阵列表">${records.map((record) => `<article class="history-entry">
+    <span class="history-dot" aria-hidden="true"></span>
+    <div class="history-bubble">
+      <header><time>${escapeHTML(record.timestamp)}</time><span>${escapeHTML(record.spreadLabel)}</span></header>
+      <p class="history-question">Q // ${escapeHTML(record.question)}</p>
+      <blockquote>“${escapeHTML(record.summary)}”</blockquote>
+      ${historyThumbnails(record)}
+    </div>
+  </article>`).join("")}</section>`;
+}
+
+function historyPage() {
+  if (!userProfiles.some((profile) => profile.id === historyUserId)) {
+    historyUserId = userProfiles.find((profile) => profile.isActive)?.id || userProfiles[0]?.id || null;
+  }
+  const profile = userProfiles.find((item) => item.id === historyUserId);
+  const options = userProfiles.map((item) => `<option value="${escapeHTML(item.id)}" ${item.id === historyUserId ? "selected" : ""}>${escapeHTML(item.nickname || "未命名用户")}</option>`).join("");
+  const records = loadHistoryRecords(historyUserId);
+  return `<main class="history-page">
+    <div class="history-user-picker">
+      <label for="history-user-select">选择用户</label>
+      <select id="history-user-select" ${userProfiles.length ? "" : "disabled"}>${options || "<option>还没有用户</option>"}</select>
+    </div>
+    <div class="history-heading"><span class="eyebrow">TAROT ARCHIVE</span><h1>${escapeHTML(profile?.nickname || "历史牌阵")}</h1><p>历史记录</p></div>
+    ${userProfiles.length ? historyTimeline(records) : `<div class="history-empty"><span>◇</span><strong>请先添加用户</strong><p>历史记录会按照用户档案分别保存。</p></div>`}
   </main>`;
 }
 
@@ -270,6 +368,7 @@ function renderSettings(message = "") {
   if (activeSection === "providers") content = `<div class="settings-layout">${providerSidebar()}<section class="settings-editor" aria-label="供应商配置">${providerEditor()}</section></div>`;
   if (activeSection === "profile-list") content = userManager();
   if (activeSection === "profile-edit") content = userProfileEditor();
+  if (activeSection === "history") content = historyPage();
   overlay.innerHTML = `<div class="settings-page">
     <header class="settings-header"><span class="settings-brand"><span aria-hidden="true"></span> ARCANA <small>/ SETTINGS</small></span><button id="settings-back" type="button">${home ? "← 返回抽牌" : "← 返回设置"}</button></header>
     ${content}
@@ -287,6 +386,12 @@ function renderSettings(message = "") {
   if (activeSection === "profile-list") bindUserManager(overlay);
   if (activeSection === "profile-edit") bindUserProfileEditor(overlay);
   if (activeSection === "providers") bindProviderEditor(overlay);
+  if (activeSection === "history") {
+    overlay.querySelector("#history-user-select")?.addEventListener("change", (event) => {
+      historyUserId = event.currentTarget.value;
+      renderSettings();
+    });
+  }
   if (message) showFeedback(message);
 }
 
@@ -316,6 +421,12 @@ function bindUserManager(overlay) {
 
 function bindProfileSwipe(overlay) {
   let openRow = null;
+  const setRowOpen = (row, shouldOpen) => {
+    row.classList.toggle("is-open", shouldOpen);
+    row.querySelectorAll(".user-profile-actions button").forEach((button) => {
+      button.tabIndex = shouldOpen ? 0 : -1;
+    });
+  };
   overlay.querySelectorAll(".user-profile-row").forEach((row) => {
     const surface = row.querySelector(".user-profile-surface");
     let startX = 0;
@@ -324,7 +435,7 @@ function bindProfileSwipe(overlay) {
     let dragging = false;
     surface.addEventListener("pointerdown", (event) => {
       if (event.target.closest(".profile-row-toggle")) return;
-      if (openRow && openRow !== row) openRow.classList.remove("is-open");
+      if (openRow && openRow !== row) setRowOpen(openRow, false);
       startX = event.clientX;
       startY = event.clientY;
       offset = row.classList.contains("is-open") ? -140 : 0;
@@ -345,7 +456,7 @@ function bindProfileSwipe(overlay) {
       const moved = event.clientX - startX;
       const shouldOpen = offset + moved < -45;
       surface.style.transform = "";
-      row.classList.toggle("is-open", shouldOpen);
+      setRowOpen(row, shouldOpen);
       openRow = shouldOpen ? row : null;
     };
     surface.addEventListener("pointerup", finish);
@@ -516,7 +627,7 @@ export function initializeProviderSettings(callback = () => {}) {
   document.querySelector(".wordmark")?.addEventListener("click", (event) => { event.preventDefault(); openSettings(); });
   window.addEventListener("keydown", (event) => { if (event.key === "Escape" && document.querySelector("#provider-settings")) closeSettings(); });
   window.addEventListener("storage", (event) => {
-    if (![PROVIDER_STORAGE_KEY, PROFILE_STORAGE_KEY, LEGACY_PROFILE_STORAGE_KEY].includes(event.key)) return;
+    if (![PROVIDER_STORAGE_KEY, PROFILE_STORAGE_KEY, LEGACY_PROFILE_STORAGE_KEY].includes(event.key) && !event.key?.startsWith(HISTORY_STORAGE_PREFIX)) return;
     settings = loadSettings();
     userProfiles = loadProfiles();
     if (!settings.providers.some((item) => item.id === selectedId)) selectedId = settings.activeId || settings.providers[0]?.id || null;

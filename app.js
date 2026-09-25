@@ -1,5 +1,5 @@
 import { DECK, cardFace } from "./cards.js";
-import { getActiveProvider, getActiveProviderLabel, getProviderChoices, getUserInfo, initializeProviderSettings, setActiveProvider } from "./settings.js";
+import { getActiveProvider, getActiveProviderLabel, getProviderChoices, getUserInfo, initializeProviderSettings, saveHistoryRecord, setActiveProvider } from "./settings.js";
 
 const app = document.querySelector("#app");
 const state = {
@@ -20,6 +20,8 @@ const state = {
   initialReading: "",
   chatMessages: [],
   conversationClosed: false,
+  userInfo: { enabled: false },
+  historyUserId: null,
 };
 const labels = {
   1: ["此刻"],
@@ -36,10 +38,13 @@ const threeCardFrameworks = {
 };
 const timers = new Set();
 let shuffleInterval = null;
-let armedAtDown = null;
 let cutListeners = null;
 let stageListeners = null;
 let fanZones = [];
+let fanOffset = 0;
+let fanMotionFrame = null;
+let activeReadingRequest = null;
+let activeConversationRequest = null;
 
 function later(callback, milliseconds) {
   const id = setTimeout(() => { timers.delete(id); callback(); }, milliseconds);
@@ -58,6 +63,12 @@ function clearTimers() {
   cutListeners = null;
   stageListeners?.abort();
   stageListeners = null;
+  if (fanMotionFrame) cancelAnimationFrame(fanMotionFrame);
+  fanMotionFrame = null;
+  activeReadingRequest?.abort();
+  activeReadingRequest = null;
+  activeConversationRequest?.abort();
+  activeConversationRequest = null;
   fanZones = [];
 }
 
@@ -65,6 +76,50 @@ function escapeHTML(value) {
   return String(value).replace(/[&<>"']/g, (character) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   })[character]);
+}
+
+function eastEightTimestamp(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date).reduce((result, part) => ({ ...result, [part.type]: part.value }), {});
+  return `${parts.year}.${parts.month}.${parts.day} // ${parts.hour}:${parts.minute}`;
+}
+
+function splitReadingSummary(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/\s*【总结】\s*[:：]?\s*([\s\S]+)$/);
+  if (!match) return { reading: text, summary: "" };
+  return {
+    reading: text.slice(0, match.index).trim(),
+    // 提示词要求模型控制在 100 字内；这里保留模型返回的完整句子，避免机械截断半句话。
+    summary: match[1].trim(),
+  };
+}
+
+function saveCompletedReading(summary) {
+  if (!state.historyUserId || !summary) return false;
+  const spreadLabel = state.spread === 1 ? "单牌" : state.spread === 3 ? "三牌阵" : "凯尔特十字";
+  return saveHistoryRecord(state.historyUserId, {
+    id: crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`,
+    createdAt: Date.now(),
+    timestamp: eastEightTimestamp(),
+    question: state.question,
+    spread: state.spread,
+    spreadLabel,
+    summary,
+    cards: state.selected.map((card, index) => ({
+      id: card.id,
+      chinese: card.chinese,
+      reversed: card.reversed,
+      position: positionLabels()[index],
+    })),
+  });
 }
 
 function shuffle(items) {
@@ -89,38 +144,34 @@ function go(stage) {
 }
 
 function backArt() {
-  return `<span class="back-ornament" aria-hidden="true"><svg viewBox="0 0 180 270" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="8" y="8" width="164" height="254" rx="5" stroke="currentColor" opacity=".68"/>
-    <rect x="17" y="17" width="146" height="236" rx="2" stroke="currentColor" opacity=".25"/>
-    <circle cx="90" cy="134" r="47" stroke="currentColor"/><circle cx="90" cy="134" r="30" stroke="currentColor" opacity=".5"/>
-    <path d="M90 51V217M31 134H149M48 80L132 188M132 80L48 188" stroke="currentColor" opacity=".34"/>
-    <path d="M90 101L99 125L123 134L99 143L90 167L81 143L57 134L81 125L90 101Z" fill="currentColor"/>
-    <circle cx="90" cy="134" r="6" fill="#111216"/>
-    <path d="M84 38L90 29L96 38M85 234L90 241L95 234" stroke="currentColor"/>
-  </svg></span>`;
+  return `<span class="back-ornament" aria-hidden="true"><img src="/assets/ui/card-back-cream-magic-v3.png" alt=""></span>`;
 }
 
 function renderQuestion() {
   app.innerHTML = `<section class="ritual-screen question-screen screen-enter">
-    <div class="ritual-ornament ornament-one" aria-hidden="true"></div>
-    <div class="ritual-ornament ornament-two" aria-hidden="true"></div>
-    <div class="question-inner">
-      <div class="eyebrow"><span class="eyebrow-line"></span> A MOMENT FOR YOUR QUESTION</div>
-      <h1>此刻，<br><em>你想问什么？</em></h1>
-      <p class="question-lead">不用想一个完美的问题。把心里正在发生的事，写下来就好。</p>
-      <form id="question-form" class="ritual-question-form">
-        <label class="sr-only" for="question">想问的问题</label>
-        <textarea id="question" rows="3" maxlength="220" placeholder="我想聊聊……" required>${escapeHTML(state.question)}</textarea>
-        <fieldset class="ritual-spreads"><legend>选择牌阵</legend>
-          <button type="button" data-spread="1" class="ritual-spread ${state.spread === 1 ? "active" : ""}" aria-pressed="${state.spread === 1}"><strong>单牌</strong></button>
-          <button type="button" data-spread="3" class="ritual-spread ${state.spread === 3 ? "active" : ""}" aria-pressed="${state.spread === 3}"><strong>三牌阵</strong></button>
-          <button type="button" data-spread="10" class="ritual-spread ${state.spread === 10 ? "active" : ""}" aria-pressed="${state.spread === 10}"><strong>凯尔特十字</strong></button>
-        </fieldset>
-        <button class="ritual-primary" type="submit">开始 <span aria-hidden="true">↗</span></button>
-      </form>
-      <p class="prototype-note">点击左上角 ARCANA，可以添加和切换解读供应商。</p>
+    <div class="question-layout">
+      <div class="question-inner">
+        <span class="question-mark" aria-hidden="true"></span>
+        <h1>此刻，你想问什么</h1>
+        <form id="question-form" class="ritual-question-form">
+          <label class="sr-only" for="question">想问的问题</label>
+          <textarea id="question" class="question-center-input" rows="3" maxlength="220" aria-label="想问的问题" required>${escapeHTML(state.question)}</textarea>
+          <fieldset class="ritual-spreads"><legend>选择牌阵</legend>
+            <button type="button" data-spread="1" class="ritual-spread ${state.spread === 1 ? "active" : ""}" aria-pressed="${state.spread === 1}"><strong>单牌</strong></button>
+            <button type="button" data-spread="3" class="ritual-spread ${state.spread === 3 ? "active" : ""}" aria-pressed="${state.spread === 3}"><strong>三牌阵</strong></button>
+            <button type="button" data-spread="10" class="ritual-spread ${state.spread === 10 ? "active" : ""}" aria-pressed="${state.spread === 10}"><strong>凯尔特十字</strong></button>
+          </fieldset>
+          <button class="ritual-primary" type="submit">开始抽牌 <span class="button-spark" aria-hidden="true"></span></button>
+        </form>
+      </div>
+      <div class="question-card-stage" aria-hidden="true">
+        <span class="question-orbit orbit-one"></span>
+        <span class="question-orbit orbit-two"></span>
+        <div class="question-card-preview">${backArt()}</div>
+        <span class="question-spark spark-one"></span>
+        <span class="question-spark spark-two"></span>
+      </div>
     </div>
-    <div class="question-deco" aria-hidden="true"><div class="question-deco-card">${cardFace(DECK[0])}</div></div>
   </section>`;
 
   const form = document.querySelector("#question-form");
@@ -133,6 +184,10 @@ function renderQuestion() {
       option.setAttribute("aria-pressed", String(active));
     });
   }));
+  requestAnimationFrame(() => {
+    input.focus({ preventScroll: true });
+    input.setSelectionRange(input.value.length, input.value.length);
+  });
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     const question = input.value.trim();
@@ -149,6 +204,8 @@ function renderQuestion() {
     state.initialReading = "";
     state.chatMessages = [];
     state.conversationClosed = false;
+    state.userInfo = getUserInfo();
+    state.historyUserId = state.userInfo.enabled && state.userInfo.id ? state.userInfo.id : null;
     go("shuffle");
   });
 }
@@ -157,13 +214,12 @@ function renderShuffle() {
   state.isHolding = false;
   app.innerHTML = `<section class="ritual-screen shuffle-screen screen-enter">
     <div class="ritual-top"><button class="ritual-back" id="back-question">← 返回提问</button><span>01 / 04 — 洗牌</span></div>
-    <div class="ritual-heading"><span class="eyebrow">THE CARDS ARE IN YOUR HANDS</span><h1>把注意力放在你的问题上。</h1><p>按住牌面至少半秒开始洗牌，松开时停下。</p></div>
+    <div class="ritual-heading shuffle-heading"><h1>洗牌</h1><p class="shuffle-question"><em>“${escapeHTML(state.question)}”</em></p></div>
     <div class="shuffle-surface" id="shuffle-surface">
       <div class="shuffle-glow" aria-hidden="true"></div>
-      <div class="shuffle-pile" id="shuffle-pile" tabindex="0" role="button" aria-label="按住牌面至少半秒开始洗牌，松开后进入切牌">${Array.from({ length: 14 }, (_, index) => `<div class="shuffle-card ${index % 4 === 1 ? "visually-reversed" : ""}" style="--stack-x:${(index - 7) * 1.1}px;--stack-y:${(7 - index) * 1.2}px;--tilt:${(index % 5 - 2) * .5}deg;--shuffle-delay:${-index * 67}ms">${backArt()}</div>`).join("")}</div>
+      <div class="shuffle-pile" id="shuffle-pile" tabindex="0" role="button" aria-label="按住牌面洗牌，松开牌面结束">${Array.from({ length: 14 }, (_, index) => `<div class="shuffle-card ${index % 4 === 1 ? "visually-reversed" : ""}" style="--stack-x:${(index - 7) * 1.1}px;--stack-y:${(7 - index) * 1.2}px;--tilt:${(index % 5 - 2) * .5}deg;--shuffle-delay:${-index * 67}ms">${backArt()}</div>`).join("")}</div>
     </div>
-    <div class="ritual-instruction" id="shuffle-instruction"><span class="instruction-mark" aria-hidden="true"></span><strong>按住牌面洗牌</strong><small>长按半秒开始，轻触不会洗牌</small></div>
-    <p class="ritual-question">“${escapeHTML(state.question)}”</p>
+    <div class="ritual-instruction" id="shuffle-instruction"><span class="instruction-mark" aria-hidden="true"></span><strong>按住牌面洗牌</strong><small>松开牌面结束</small></div>
   </section>`;
   const screen = document.querySelector(".shuffle-screen");
   const preventSelection = (event) => event.preventDefault();
@@ -181,7 +237,7 @@ function renderShuffle() {
     state.isHolding = true;
     pile.classList.remove("is-pressing");
     pile.classList.add("is-shuffling");
-    document.querySelector("#shuffle-instruction").innerHTML = `<span class="instruction-mark" aria-hidden="true"></span><strong>正在洗牌…</strong><small>松开手指或鼠标即可停下</small>`;
+    document.querySelector("#shuffle-instruction").innerHTML = `<span class="instruction-mark" aria-hidden="true"></span><strong>正在洗牌…</strong><small>松开牌面结束</small>`;
     shuffleInterval = setInterval(() => {
       state.deck = shuffle(state.deck);
       const cards = pile.querySelectorAll(".shuffle-card");
@@ -247,9 +303,9 @@ function renderShuffle() {
 function renderCut() {
   app.innerHTML = `<section class="ritual-screen cut-screen screen-enter">
     <div class="ritual-top"><button class="ritual-back" id="reshuffle-top">← 重新洗牌</button><span>02 / 04 — 切牌</span></div>
-    <div class="ritual-heading"><span class="eyebrow">A SMALL CHANGE IN THE ORDER</span><h1>轮到你切牌。</h1><p id="cut-description">左右滑动可以切牌，也可以直接完成。按你的直觉来。</p></div>
+    <div class="ritual-heading"><h1>切牌</h1><p id="cut-description">左右滑动可以切牌，也可以直接完成。</p></div>
     <div class="cut-stage"><div class="cut-halo" aria-hidden="true"></div><div class="cut-pile" id="cut-pile" role="button" tabindex="0" aria-label="向左或向右拖动切牌，键盘可用左右方向键切牌"><div class="cut-half cut-bottom">${backArt()}</div><div class="cut-half cut-top">${backArt()}</div></div></div>
-    <div class="cut-actions"><button class="ritual-primary cut-button" type="button" id="cut-done">完成 <span aria-hidden="true">↗</span></button><button class="ritual-secondary" type="button" id="reshuffle">重新洗牌</button></div>
+    <div class="cut-actions"><button class="ritual-primary cut-button" type="button" id="cut-done">完成</button><button class="ritual-secondary" type="button" id="reshuffle">重新洗牌</button></div>
     <p class="cut-count" id="cut-count">尚未切牌</p>
   </section>`;
   document.querySelector("#reshuffle-top").addEventListener("click", () => go("shuffle"));
@@ -358,14 +414,14 @@ function renderFan() {
   state.isOpening = true;
   state.isSelecting = false;
   state.hoveredId = null;
+  fanOffset = 0;
   app.innerHTML = `<section class="ritual-screen fan-screen screen-enter">
     <div class="ritual-top"><span>03 / 04 — 选牌</span><span>ARCANA · ${state.spread === 1 ? "单牌" : state.spread === 3 ? "三牌阵" : "凯尔特十字"}</span></div>
-    <div class="fan-heading"><span class="eyebrow">TRUST YOUR FIRST FEELING</span><h1>选择让你停下<span class="mobile-break"><br></span>目光的牌。</h1><p id="fan-instruction">牌面正在展开…</p></div>
     <div class="selection-tray selection-tray-${state.spread}" id="selection-tray">${positionLabels().map((label, index) => `<div class="tray-item"><div class="tray-slot" id="selection-slot-${index}"><span>${String(index + 1).padStart(2, "0")}</span></div><small>${label}</small></div>`).join("")}</div>
-    <div class="fan-area" id="fan-area" tabindex="0" role="group" aria-label="78 张塔罗牌扇面。移动指针或手指选择，再点击确认。键盘可用左右方向键选择、回车确认。">
-      <div class="fan-center-mark" aria-hidden="true"></div>
+    <div class="fan-status"><strong id="fan-selection-count">选择 ${state.spread} 张牌</strong><span id="fan-instruction">左右滑动牌堆，点击一张牌</span></div>
+    <div class="fan-area" id="fan-area" tabindex="0" role="group" aria-label="横向弧形塔罗牌堆。左右滑动浏览，点击一次让牌浮起，再点击同一张确认选择。键盘可用左右方向键浏览、回车确认。">
+      <div class="fan-arc-glow" aria-hidden="true"></div>
       ${state.deck.map(fanBack).join("")}
-      <div class="fan-gap-info" id="fan-gap-info"><strong>请选择 ${state.spread} 张牌</strong><span>先滑过牌面，再点击确认</span></div>
     </div>
   </section>`;
   const area = document.querySelector("#fan-area");
@@ -374,41 +430,100 @@ function renderFan() {
     if (state.stage !== "fan") return;
     state.isOpening = false;
     area.classList.add("is-ready");
-    document.querySelector("#fan-instruction").textContent = "滑过牌面，让一张牌浮起；再点击它，确认选择。";
+    document.querySelector("#fan-instruction").textContent = "左右滑动 · 点一次亮起 · 再点一次确认";
     area.querySelectorAll(".fan-card").forEach((element) => { element.style.transitionDelay = "0ms"; });
-  }, 1200);
+  }, 760);
 
-  area.addEventListener("pointermove", (event) => {
-    if (state.isOpening || state.isSelecting) return;
-    const card = cardAtPoint(event.clientX, event.clientY);
-    setHover(card?.id ?? null);
-  });
+  function stopMotion() {
+    if (fanMotionFrame) cancelAnimationFrame(fanMotionFrame);
+    fanMotionFrame = null;
+    area.classList.remove("is-coasting");
+  }
+
+  function beginCoast(initialVelocity) {
+    stopMotion();
+    let velocity = initialVelocity;
+    let previous = performance.now();
+    area.classList.add("is-coasting");
+    const tick = (now) => {
+      if (state.stage !== "fan" || state.isSelecting) { stopMotion(); return; }
+      const elapsed = Math.min(34, now - previous);
+      previous = now;
+      fanOffset = wrapFanOffset(fanOffset + velocity * elapsed, getRemaining().length);
+      velocity *= Math.pow(.94, elapsed / 16.67);
+      layoutFan(false);
+      if (Math.abs(velocity) < .00045) { stopMotion(); return; }
+      fanMotionFrame = requestAnimationFrame(tick);
+    };
+    fanMotionFrame = requestAnimationFrame(tick);
+  }
+
+  let gesture = null;
   area.addEventListener("pointerdown", (event) => {
-    if (state.isOpening || state.isSelecting) return;
+    if (state.isOpening || state.isSelecting || event.button !== 0) return;
     event.preventDefault();
-    const card = cardAtPoint(event.clientX, event.clientY, true);
-    armedAtDown = card && state.hoveredId === card.id ? card.id : null;
-    setHover(card?.id ?? null);
+    stopMotion();
+    const now = performance.now();
+    gesture = { id: event.pointerId, startX: event.clientX, lastX: event.clientX, startOffset: fanOffset, lastTime: now, velocity: 0, moved: false };
     area.setPointerCapture(event.pointerId);
+    area.classList.add("is-dragging");
+  });
+  area.addEventListener("pointermove", (event) => {
+    if (!gesture || gesture.id !== event.pointerId || state.isSelecting) return;
+    const metrics = fanMetrics();
+    const dx = event.clientX - gesture.startX;
+    if (!gesture.moved && Math.abs(dx) < 5) return;
+    gesture.moved = true;
+    setHover(null);
+    const now = performance.now();
+    const elapsed = Math.max(1, now - gesture.lastTime);
+    const instantVelocity = -((event.clientX - gesture.lastX) / metrics.pixelsPerCard) / elapsed;
+    gesture.velocity = gesture.velocity * .62 + instantVelocity * .38;
+    gesture.lastX = event.clientX;
+    gesture.lastTime = now;
+    fanOffset = wrapFanOffset(gesture.startOffset - dx / metrics.pixelsPerCard, getRemaining().length);
+    layoutFan(false);
   });
   area.addEventListener("pointerup", (event) => {
-    if (state.isOpening || state.isSelecting) return;
+    if (!gesture || gesture.id !== event.pointerId || state.isSelecting) return;
+    const completed = gesture;
+    gesture = null;
+    area.classList.remove("is-dragging");
+    if (completed.moved) {
+      beginCoast(completed.velocity);
+      return;
+    }
     const card = cardAtPoint(event.clientX, event.clientY, true);
-    if (card && card.id === armedAtDown && state.hoveredId === card.id) selectCard(card);
-    armedAtDown = null;
+    if (!card) { setHover(null); return; }
+    if (state.hoveredId === card.id) {
+      selectCard(card);
+    } else {
+      setHover(card.id);
+      document.querySelector("#fan-instruction").textContent = "再次点击这张牌，确认选择";
+    }
   });
-  area.addEventListener("pointerleave", (event) => {
-    if (event.pointerType === "mouse" && !area.hasPointerCapture(event.pointerId)) setHover(null);
+  area.addEventListener("pointercancel", (event) => {
+    if (!gesture || gesture.id !== event.pointerId) return;
+    gesture = null;
+    area.classList.remove("is-dragging");
   });
-  area.addEventListener("pointercancel", () => { armedAtDown = null; });
+  area.addEventListener("wheel", (event) => {
+    if (state.isOpening || state.isSelecting || Math.abs(event.deltaX) < Math.abs(event.deltaY) * .6) return;
+    event.preventDefault();
+    stopMotion();
+    fanOffset = wrapFanOffset(fanOffset + event.deltaX / fanMetrics().pixelsPerCard, getRemaining().length);
+    setHover(null);
+    layoutFan(false);
+  }, { passive: false });
   area.addEventListener("keydown", (event) => {
     if (state.isOpening || state.isSelecting) return;
     const remaining = getRemaining();
-    const current = remaining.findIndex((card) => card.id === state.hoveredId);
     if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
       event.preventDefault();
       const delta = event.key === "ArrowRight" ? 1 : -1;
-      setHover(remaining[(current + delta + remaining.length) % remaining.length].id);
+      fanOffset = wrapFanOffset(Math.round(fanOffset) + delta, remaining.length);
+      layoutFan(false);
+      setHover(remaining[Math.round(fanOffset) % remaining.length].id);
     }
     if ((event.key === "Enter" || event.key === " ") && state.hoveredId) {
       event.preventDefault();
@@ -420,27 +535,53 @@ function renderFan() {
 
 function onFanResize() { if (state.stage === "fan") layoutFan(false); }
 function getRemaining() { const chosen = new Set(state.selected.map((card) => card.id)); return state.deck.filter((card) => !chosen.has(card.id)); }
+function wrapFanOffset(value, length) {
+  if (!length) return 0;
+  return ((value % length) + length) % length;
+}
+
 function fanMetrics() {
   const area = document.querySelector("#fan-area");
   const width = area.clientWidth;
   const height = area.clientHeight;
-  return { area, radius: Math.min(width * .38, height * .43, 286), cx: width / 2, cy: height * .58 };
+  const compact = width < 560;
+  const radius = compact ? Math.max(355, width * 1.02) : Math.max(500, Math.min(700, width * .58));
+  const cardWidth = compact ? 132 : 165;
+  // 相邻牌只错开 13% 的牌宽，保持约 87% 重叠，彻底压住蝴蝶结碎边。
+  const stepAngle = cardWidth * .13 / radius;
+  return {
+    area,
+    width,
+    height,
+    radius,
+    stepAngle,
+    // 可见数量随屏幕宽度自然增加，让 87% 重叠的牌扇仍铺满左右两侧。
+    maxAngle: compact ? .72 : .78,
+    pixelsPerCard: radius * stepAngle,
+    cx: width / 2,
+    cy: 0,
+    centerY: compact ? Math.max(145, height * .34) : Math.max(165, height * .34),
+  };
 }
 
 function layoutFan(opening) {
   const remaining = getRemaining();
-  const { area, radius } = fanMetrics();
+  if (!remaining.length) return;
+  fanOffset = wrapFanOffset(fanOffset, remaining.length);
+  const { area, radius, stepAngle, maxAngle, centerY } = fanMetrics();
   fanZones = remaining.map((card, index) => {
     const element = area.querySelector(`[data-card-id="${card.id}"]`);
-    const angle = 135 + index / Math.max(remaining.length - 1, 1) * 270;
-    const radians = angle * Math.PI / 180;
-    const x = Math.cos(radians) * radius;
-    const y = Math.sin(radians) * radius;
-    const rotation = angle + 90 + (card.reversed ? 180 : 0);
+    let relative = index - fanOffset;
+    if (relative > remaining.length / 2) relative -= remaining.length;
+    if (relative < -remaining.length / 2) relative += remaining.length;
+    const radians = relative * stepAngle;
+    const visible = Math.abs(radians) <= maxAngle + stepAngle * 1.5;
+    const x = Math.sin(radians) * radius;
+    const y = centerY + (1 - Math.cos(radians)) * radius;
+    const rotation = radians * 180 / Math.PI + (card.reversed ? 180 : 0);
     element.dataset.rotation = String(rotation);
-    element.style.transitionDelay = opening ? `${index * 9}ms` : "0ms";
-    element.style.opacity = "1";
-    return { card, element, index, radians, rotation, rotationSin: Math.sin(rotation * Math.PI / 180), rotationCos: Math.cos(rotation * Math.PI / 180), baseX: x, baseY: y, width: element.offsetWidth, height: element.offsetHeight };
+    element.style.transitionDelay = opening && visible ? `${Math.min(250, Math.abs(relative) * 15)}ms` : "0ms";
+    return { card, element, index, relative, visible, radians, rotation, rotationSin: Math.sin(rotation * Math.PI / 180), rotationCos: Math.cos(rotation * Math.PI / 180), baseX: x, baseY: y, width: element.offsetWidth, height: element.offsetHeight };
   });
   applyFanFocus();
 }
@@ -451,9 +592,10 @@ function cardAtPoint(clientX, clientY, preferHovered = false) {
   const bounds = area.getBoundingClientRect();
   const x = clientX - bounds.left - cx;
   const y = clientY - bounds.top - cy;
-  let nearest = null;
-  let nearestDistance = Infinity;
+  let topmost = null;
+  let topmostOrder = -Infinity;
   for (const zone of fanZones) {
+    if (!zone.visible) continue;
     const dx = x - zone.x;
     const dy = y - zone.y;
     const localX = dx * zone.rotationCos + dy * zone.rotationSin;
@@ -461,26 +603,23 @@ function cardAtPoint(clientX, clientY, preferHovered = false) {
     const margin = 2;
     if (Math.abs(localX) > zone.width * zone.scale / 2 + margin || Math.abs(localY) > zone.height * zone.scale / 2 + margin) continue;
     if (preferHovered && zone.card.id === state.hoveredId) return zone.card;
-    const baseDx = x - zone.baseX;
-    const baseDy = y - zone.baseY;
-    const distance = baseDx * baseDx + baseDy * baseDy;
-    if (distance < nearestDistance) { nearest = zone.card; nearestDistance = distance; }
+    // 多张牌的矩形会重叠；命中视觉层级最高的那张，才等于鼠标点到的可见边缘。
+    if (zone.relative > topmostOrder) { topmost = zone.card; topmostOrder = zone.relative; }
   }
-  return nearest;
+  return topmost;
 }
 
 function applyFanFocus() {
-  const focused = fanZones.findIndex((zone) => zone.card.id === state.hoveredId);
   for (const zone of fanZones) {
-    const gap = zone.index - focused;
-    const distance = Math.abs(gap);
-    const isFocused = focused >= 0 && gap === 0;
-    const spacing = focused >= 0 && distance > 0 && distance <= 3 ? Math.sign(gap) * [0, 24, 14, 6][distance] : 0;
-    zone.x = zone.baseX - Math.sin(zone.radians) * spacing;
-    zone.y = zone.baseY + Math.cos(zone.radians) * spacing - (isFocused ? 18 : 0);
-    zone.scale = isFocused ? 1.24 : 1;
+    const isFocused = zone.visible && zone.card.id === state.hoveredId;
+    zone.x = zone.baseX;
+    zone.y = zone.baseY - (isFocused ? 48 : 0);
+    zone.scale = isFocused ? 1.1 : 1;
     zone.element.classList.toggle("is-hovered", isFocused);
-    zone.element.style.zIndex = isFocused ? "200" : String(zone.index + 1);
+    zone.element.style.opacity = zone.visible ? "1" : "0";
+    zone.element.style.visibility = zone.visible ? "visible" : "hidden";
+    // 牌从左到右依次压住前一张，避免中间牌因为层级最高而完整露出。
+    zone.element.style.zIndex = isFocused ? "300" : String(Math.max(1, 120 + Math.round(zone.relative)));
     zone.element.style.transform = `translate(-50%, -50%) translate(${zone.x}px, ${zone.y}px) rotate(${zone.rotation}deg) scale(${zone.scale})`;
   }
 }
@@ -528,10 +667,12 @@ async function selectCard(card) {
   slot.innerHTML = `<div class="tray-face" style="transform:rotate(${card.reversed ? 180 : 0}deg)">${cardFace(card)}</div>`;
   state.hoveredId = null;
   layoutFan(false);
-  document.querySelector("#fan-gap-info strong").textContent = `已选 ${state.selected.length} / ${state.spread} 张`;
-  document.querySelector("#fan-instruction").textContent = state.selected.length < state.spread ? "继续选牌。滑过一张牌，再点击确认。" : "牌阵正在形成…";
+  document.querySelector("#fan-selection-count").textContent = `已选 ${state.selected.length} / ${state.spread} 张`;
+  document.querySelector("#fan-instruction").textContent = state.selected.length < state.spread ? "左右滑动 · 点一次亮起 · 再点一次确认" : "牌阵正在形成…";
   if (state.selected.length === state.spread) {
     const area = document.querySelector("#fan-area");
+    if (fanMotionFrame) cancelAnimationFrame(fanMotionFrame);
+    fanMotionFrame = null;
     area.classList.add("fan-dismissing");
     await pause(450);
     window.removeEventListener("resize", onFanResize);
@@ -560,7 +701,7 @@ function createReadingOutput(actions) {
   return output;
 }
 
-async function streamToOutput(response, output, onPayload = () => {}, onFirstContent = () => {}) {
+async function streamToOutput(response, output, onPayload = () => {}, onFirstContent = () => {}, signal = null, hiddenMarker = "") {
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
     throw new Error(payload.error || `请求失败（${response.status}）。`);
@@ -572,14 +713,29 @@ async function streamToOutput(response, output, onPayload = () => {}, onFirstCon
   const reader = response.body.getReader();
   const decoder = new TextDecoder("utf-8");
   let buffer = "";
+  let received = "";
   let rendered = "";
+  let scheduledVisible = "";
   let done = false;
   let typing = false;
   let failed = false;
   let hasContent = false;
   const characters = [];
   let resolveTyping;
+  let typingResolved = false;
   const typingFinished = new Promise((resolve) => { resolveTyping = resolve; });
+  const finishTyping = () => {
+    if (typingResolved) return;
+    typingResolved = true;
+    resolveTyping();
+  };
+  const stopReading = () => {
+    failed = true;
+    characters.length = 0;
+    reader.cancel().catch(() => {});
+    finishTyping();
+  };
+  signal?.addEventListener("abort", stopReading, { once: true });
 
   function typeNext() {
     if (failed) return;
@@ -592,15 +748,34 @@ async function streamToOutput(response, output, onPayload = () => {}, onFirstCon
       requestAnimationFrame(typeNext);
     } else {
       typing = false;
-      if (done) resolveTyping();
+      if (done) finishTyping();
     }
   }
-  function queueText(text) {
-    if (!hasContent && text) {
+  function markerPrefixLength(text) {
+    if (!hiddenMarker) return 0;
+    for (let length = Math.min(hiddenMarker.length - 1, text.length); length > 0; length -= 1) {
+      if (text.endsWith(hiddenMarker.slice(0, length))) return length;
+    }
+    return 0;
+  }
+  function queueText(text, isFinal = false) {
+    received += text;
+    let visibleTarget = received;
+    if (hiddenMarker) {
+      const markerIndex = received.indexOf(hiddenMarker);
+      if (markerIndex !== -1) {
+        visibleTarget = received.slice(0, markerIndex);
+      } else if (!isFinal) {
+        visibleTarget = received.slice(0, received.length - markerPrefixLength(received));
+      }
+    }
+    const addition = visibleTarget.slice(scheduledVisible.length);
+    scheduledVisible = visibleTarget;
+    if (!hasContent && addition) {
       hasContent = true;
       onFirstContent();
     }
-    characters.push(...text);
+    characters.push(...addition);
     if (!typing) {
       typing = true;
       requestAnimationFrame(typeNext);
@@ -617,8 +792,9 @@ async function streamToOutput(response, output, onPayload = () => {}, onFirstCon
     onPayload(payload);
     if (typeof payload.content === "string") queueText(payload.content);
     if (payload.done === true) {
+      queueText("", true);
       done = true;
-      if (!typing && !characters.length) resolveTyping();
+      if (!typing && !characters.length) finishTyping();
     }
   }
   function consumeBuffer() {
@@ -641,20 +817,23 @@ async function streamToOutput(response, output, onPayload = () => {}, onFirstCon
     buffer += decoder.decode();
     consumeBuffer();
     if (buffer.trim()) readEvent(buffer);
+    if (signal?.aborted) throw new DOMException("回应已暂停。", "AbortError");
     if (!done) throw new Error("解读连接提前结束，请重试。");
     await typingFinished;
-    return rendered;
+    return received;
   } catch (error) {
     failed = true;
     characters.length = 0;
     output.textContent = rendered;
+    if (signal?.aborted && error?.name !== "AbortError") throw new DOMException("回应已暂停。", "AbortError");
     throw error;
   } finally {
+    signal?.removeEventListener("abort", stopReading);
     reader.releaseLock();
   }
 }
 
-async function fetchReading(output, onFirstContent) {
+async function fetchReading(output, onFirstContent, signal) {
   const provider = state.initialProvider;
   const response = await fetch("/api/reading", {
     method: "POST",
@@ -668,9 +847,11 @@ async function fetchReading(output, onFirstContent) {
         position: positionLabels()[index],
         reversed: card.reversed,
       })),
-      userInfo: getUserInfo(),
+      userInfo: state.userInfo,
+      recordHistory: Boolean(state.historyUserId),
       ...(provider ? { provider } : {}),
     }),
+    signal,
   });
   const reading = await streamToOutput(response, output, (payload) => {
     if (payload.conversationId) state.conversationId = payload.conversationId;
@@ -681,12 +862,12 @@ async function fetchReading(output, onFirstContent) {
         element.textContent = threeCardFrameworks[payload.framework][index];
       });
     }
-  }, onFirstContent);
+  }, onFirstContent, signal, state.historyUserId ? "【总结】" : "");
   if (!state.conversationId) throw new Error("解读服务没有建立对话，请重新解读。");
   return reading;
 }
 
-async function fetchFollowUp(message, output) {
+async function fetchFollowUp(message, images, output, signal, onFirstContent) {
   const provider = getActiveProvider();
   let completion = null;
   const response = await fetch("/api/follow-up", {
@@ -695,12 +876,14 @@ async function fetchFollowUp(message, output) {
     body: JSON.stringify({
       conversationId: state.conversationId,
       message,
+      images,
       ...(provider ? { provider } : {}),
     }),
+    signal,
   });
   await streamToOutput(response, output, (payload) => {
     if (payload.done) completion = payload;
-  });
+  }, onFirstContent, signal);
   if (!completion) throw new Error("追问连接提前结束，请再试一次。");
   state.followUpCount = completion.rounds;
   return completion;
@@ -718,12 +901,22 @@ function refreshResultProviderSelect() {
   select.value = choices.find((item) => item.active)?.id || "";
 }
 
+function safeLocalImage(value) {
+  return typeof value === "string" && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(value) ? value : "";
+}
+
 function conversationBubble(message) {
   const user = message.role === "user";
   const errorClass = message.error ? " is-error" : "";
-  const body = `<div class="chat-message-body"><small>${user ? "你" : "塔罗师"}</small><div class="chat-bubble"><p>${escapeHTML(message.text)}</p></div></div>`;
-  const avatar = `<span class="chat-avatar ${user ? "chat-avatar-user" : "chat-avatar-reader"}" aria-hidden="true">${user ? "你" : "A"}</span>`;
-  return `<article class="conversation-message ${user ? "conversation-user" : "conversation-reader"}${errorClass}">${user ? `${body}${avatar}` : `${avatar}${body}`}</article>`;
+  const stoppedClass = message.stopped ? " is-stopped" : "";
+  const attachments = Array.isArray(message.images)
+    ? `<div class="chat-attachments">${message.images.map((image) => safeLocalImage(image)).filter(Boolean).map((image) => `<img src="${escapeHTML(image)}" alt="本轮上传的图片">`).join("")}</div>`
+    : "";
+  const copy = message.loading
+    ? `<p class="chat-bubble-copy"><span class="typing-dots" aria-label="塔罗师正在回应"><i></i><i></i><i></i></span></p>`
+    : message.text ? `<p class="chat-bubble-copy">${escapeHTML(message.text)}</p>` : "";
+  const body = `<div class="chat-message-body"><small>${user ? "你" : "塔罗师"}</small><div class="chat-bubble">${attachments}${copy}</div></div>`;
+  return `<article class="conversation-message ${user ? "conversation-user" : "conversation-reader"}${errorClass}${stoppedClass}">${body}</article>`;
 }
 
 function drawerCard(card, index) {
@@ -736,7 +929,7 @@ function drawerCard(card, index) {
 function readingDrawerHTML() {
   return `<div class="reading-drawer-backdrop" id="reading-drawer" hidden>
     <aside class="reading-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="reading-drawer-title">
-      <header class="reading-drawer-header"><div><span class="eyebrow">THE READING</span><h2 id="reading-drawer-title">牌面与解读</h2></div><button id="close-reading-drawer" type="button" aria-label="关闭牌面与解读">关闭</button></header>
+      <header class="reading-drawer-header"><div><h2 id="reading-drawer-title">牌面与解读</h2></div><button id="close-reading-drawer" type="button" aria-label="关闭牌面与解读">关闭</button></header>
       <div class="reading-drawer-content">
         <section class="drawer-question"><small>你的问题</small><p>“${escapeHTML(state.question)}”</p></section>
         <section class="drawer-cards drawer-cards-${state.spread}" aria-label="本次牌面">${state.selected.map(drawerCard).join("")}</section>
@@ -752,20 +945,88 @@ function appendConversationMessage(messages, message) {
   const element = wrapper.firstElementChild;
   messages.append(element);
   messages.scrollTop = messages.scrollHeight;
-  return element.querySelector("p");
+  return element.querySelector(".chat-bubble-copy");
+}
+
+function blobAsDataURL(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("图片读取失败，请重新选择。"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function prepareLocalImage(file) {
+  const allowed = new Set(["image/jpeg", "image/png", "image/webp"]);
+  if (!allowed.has(file.type)) throw new Error("只支持 JPG、PNG 或 WebP 图片。");
+  if (file.size > 15 * 1024 * 1024) throw new Error("这张图片太大，请选择 15MB 以内的图片。");
+  const bitmap = await createImageBitmap(file);
+  const maxSide = 1280;
+  const scale = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close?.();
+  const encode = (quality) => new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+  let blob = await encode(.82);
+  if (blob?.size > 1150 * 1024) blob = await encode(.6);
+  if (!blob || blob.size > 1300 * 1024) throw new Error("压缩后图片仍然太大，请换一张尺寸更小的图片。");
+  return blobAsDataURL(blob);
 }
 
 function bindConversationForm(screen) {
   const form = screen.querySelector("#follow-up-form");
   const input = form.querySelector("#follow-up-input");
   const button = form.querySelector(".send-follow-up");
+  const stopButton = form.querySelector("#stop-follow-up");
   const endButton = form.querySelector("#end-conversation");
+  const imageInput = form.querySelector("#follow-up-images");
+  const imageButton = form.querySelector(".image-upload-button");
+  const imagePreview = form.querySelector("#follow-up-image-preview");
   const status = screen.querySelector("#follow-up-status");
   const messages = screen.querySelector("#conversation-messages");
+  let selectedImages = [];
+
+  function renderImagePreview() {
+    imagePreview.hidden = !selectedImages.length;
+    imagePreview.innerHTML = selectedImages.map((image, index) => `<span><img src="${escapeHTML(image.dataUrl)}" alt="${escapeHTML(image.name)}"><button type="button" data-remove-image="${index}" aria-label="移除${escapeHTML(image.name)}">×</button></span>`).join("");
+    imagePreview.querySelectorAll("[data-remove-image]").forEach((remove) => remove.addEventListener("click", () => {
+      selectedImages.splice(Number(remove.dataset.removeImage), 1);
+      renderImagePreview();
+    }));
+  }
+
+  imageInput.addEventListener("change", async () => {
+    const files = [...imageInput.files];
+    imageInput.value = "";
+    if (!files.length) return;
+    if (selectedImages.length + files.length > 3) {
+      status.textContent = "每次最多上传 3 张图片。";
+      return;
+    }
+    imageButton.classList.add("is-processing");
+    status.textContent = "正在准备图片…";
+    try {
+      for (const file of files) {
+        selectedImages.push({ name: file.name, dataUrl: await prepareLocalImage(file) });
+      }
+      renderImagePreview();
+      status.textContent = "图片已准备好，会随下一条消息发送。";
+    } catch (error) {
+      status.textContent = error.message || "图片处理失败，请重新选择。";
+    } finally {
+      imageButton.classList.remove("is-processing");
+    }
+  });
+
+  stopButton.addEventListener("click", () => activeConversationRequest?.abort());
   endButton.addEventListener("click", async () => {
     input.disabled = true;
     button.disabled = true;
     endButton.disabled = true;
+    imageInput.disabled = true;
     status.textContent = "正在结束这次对话…";
     try {
       await fetch("/api/conversation/end", {
@@ -783,26 +1044,34 @@ function bindConversationForm(screen) {
       appendConversationMessage(messages, closing);
       form.classList.add("is-closed");
       input.placeholder = "这次对话已经结束";
+      imageInput.disabled = true;
       status.textContent = "这次牌已经收好。想聊新的议题时，可以重新抽牌。";
     }
   });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const message = input.value.trim();
-    if (!message || state.followUpCount >= 8 || state.conversationClosed) { input.focus(); return; }
+    const images = selectedImages.map((image) => image.dataUrl);
+    if ((!message && !images.length) || state.followUpCount >= 8 || state.conversationClosed || activeConversationRequest) { input.focus(); return; }
     input.value = "";
+    selectedImages = [];
+    renderImagePreview();
     input.disabled = true;
     button.disabled = true;
+    button.hidden = true;
+    stopButton.hidden = false;
     endButton.disabled = true;
+    imageInput.disabled = true;
     status.textContent = "塔罗师正在回应...";
-    const userRecord = { role: "user", text: message };
+    const userRecord = { role: "user", text: message || "发送了图片", images };
     const answerRecord = { role: "assistant", text: "" };
     state.chatMessages.push(userRecord, answerRecord);
     appendConversationMessage(messages, userRecord);
-    const answerText = appendConversationMessage(messages, { role: "assistant", text: "塔罗师正在回应..." });
+    const answerText = appendConversationMessage(messages, { role: "assistant", text: "", loading: true });
+    const controller = new AbortController();
+    activeConversationRequest = controller;
     try {
-      answerText.textContent = "";
-      const completion = await fetchFollowUp(message, answerText);
+      const completion = await fetchFollowUp(message, images, answerText, controller.signal, () => { answerText.textContent = ""; });
       answerRecord.text = answerText.textContent;
       const remaining = Math.max(0, 8 - state.followUpCount);
       screen.querySelector("#follow-up-count").textContent = remaining ? `还可以追问 ${remaining} 轮` : "本次牌局已完成 8 轮追问";
@@ -818,17 +1087,32 @@ function bindConversationForm(screen) {
       }
       status.textContent = "";
     } catch (error) {
-      answerText.closest(".conversation-message").classList.add("is-error");
-      answerText.textContent = error instanceof TypeError ? "暂时无法连接解读服务，请确认 Flask 已启动。" : (error.message || "回应失败，请稍后再试。");
-      answerRecord.text = answerText.textContent;
-      answerRecord.error = true;
-      status.textContent = "这轮没有计入次数，你可以修改后重新发送。";
-      input.value = message;
+      const bubble = answerText.closest(".conversation-message");
+      if (error?.name === "AbortError") {
+        answerText.textContent = answerText.textContent.trim() || "回应已暂停。";
+        answerRecord.text = answerText.textContent;
+        answerRecord.stopped = true;
+        bubble.classList.add("is-stopped");
+        status.textContent = "已暂停。这轮不会计入次数，你可以重新输入。";
+      } else {
+        bubble.classList.add("is-error");
+        answerText.textContent = error instanceof TypeError ? "暂时无法连接解读服务，请确认 Flask 已启动。" : (error.message || "回应失败，请稍后再试。");
+        answerRecord.text = answerText.textContent;
+        answerRecord.error = true;
+        status.textContent = "这轮没有计入次数，你可以修改后重新发送。";
+        input.value = message;
+        selectedImages = images.map((dataUrl, index) => ({ name: `图片 ${index + 1}`, dataUrl }));
+        renderImagePreview();
+      }
     } finally {
+      if (activeConversationRequest === controller) activeConversationRequest = null;
+      stopButton.hidden = true;
+      button.hidden = false;
       if (!state.conversationClosed && state.followUpCount < 8) {
         input.disabled = false;
         button.disabled = false;
         endButton.disabled = false;
+        imageInput.disabled = false;
         input.focus();
       }
     }
@@ -852,9 +1136,13 @@ function renderConversation() {
     </header>
     <div class="conversation-messages" id="conversation-messages" aria-live="polite">${[...intro, ...state.chatMessages].map(conversationBubble).join("")}</div>
     <form id="follow-up-form" class="conversation-compose ${state.conversationClosed ? "is-closed" : ""}">
-      <label class="sr-only" for="follow-up-input">继续追问</label>
-      <textarea id="follow-up-input" maxlength="2000" rows="1" placeholder="${state.conversationClosed ? "这次牌局已经收牌" : "把你还没说完的话写在这里……"}" ${state.conversationClosed ? "disabled" : ""}></textarea>
-      <div class="conversation-compose-actions"><p id="follow-up-status" class="follow-up-status" role="status">${state.conversationClosed ? "这次对话已经结束。" : ""}</p><button id="end-conversation" class="end-conversation" type="button" ${state.conversationClosed ? "disabled" : ""}>结束对话</button><button class="send-follow-up" type="submit" ${state.conversationClosed ? "disabled" : ""}>发送</button></div>
+      <div id="follow-up-image-preview" class="follow-up-image-preview" hidden></div>
+      <div class="conversation-input-row">
+        <label class="image-upload-button" aria-label="上传本地图片" title="上传图片"><input id="follow-up-images" type="file" accept="image/jpeg,image/png,image/webp" multiple ${state.conversationClosed ? "disabled" : ""}><span aria-hidden="true">＋</span></label>
+        <label class="sr-only" for="follow-up-input">继续追问</label>
+        <textarea id="follow-up-input" maxlength="2000" rows="1" placeholder="${state.conversationClosed ? "这次牌局已经收牌" : "把你还没说完的话写在这里……"}" ${state.conversationClosed ? "disabled" : ""}></textarea>
+      </div>
+      <div class="conversation-compose-actions"><p id="follow-up-status" class="follow-up-status" role="status">${state.conversationClosed ? "这次对话已经结束。" : ""}</p><button id="end-conversation" class="end-conversation" type="button" ${state.conversationClosed ? "disabled" : ""}>结束对话</button><button id="stop-follow-up" class="stop-follow-up" type="button" hidden>■ 暂停</button><button class="send-follow-up" type="submit" ${state.conversationClosed ? "disabled" : ""}>发送</button></div>
     </form>
   </section>${readingDrawerHTML()}`;
   refreshResultProviderSelect();
@@ -880,9 +1168,9 @@ function renderConversation() {
 function renderResult() {
   app.innerHTML = `<section class="ritual-screen result-screen screen-enter">
     <div class="ritual-top result-top"><button class="ritual-back" id="start-over">← 重新开始</button><span>04 / 04 — 你的牌阵</span></div>
-    <div class="result-heading"><span class="eyebrow">YOUR CARDS HAVE FOUND THEIR PLACE</span><h1>你的牌，已经来到面前。</h1><p>“${escapeHTML(state.question)}”</p></div>
+    <div class="result-heading"><h1 class="result-question-title">“${escapeHTML(state.question)}”</h1></div>
     <div class="result-layout result-layout-${state.spread}">${state.selected.map(resultCard).join("")}</div>
-    <div class="result-actions"><button class="ritual-primary" id="interpret" type="button">开始解读 <span aria-hidden="true">↗</span></button><p>解读会在固定区域内展开，完成后可以继续对话。</p></div>
+    <div class="result-actions"><button class="ritual-primary" id="interpret" type="button">开始解读</button><p>解读会在固定区域内展开，完成后可以继续对话。</p></div>
   </section>`;
   document.querySelector("#start-over").addEventListener("click", () => {
     state.question = "";
@@ -892,6 +1180,8 @@ function renderResult() {
     state.initialReading = "";
     state.chatMessages = [];
     state.conversationClosed = false;
+    state.userInfo = { enabled: false };
+    state.historyUserId = null;
     go("question");
   });
   const button = document.querySelector("#interpret");
@@ -926,6 +1216,8 @@ function renderResult() {
     const output = document.querySelector("#reading-output") || createReadingOutput(actions);
     const revealReading = () => screen.classList.add("has-reading");
     output.textContent = "";
+    const controller = new AbortController();
+    activeReadingRequest = controller;
     try {
       state.conversationId = null;
       state.followUpCount = 0;
@@ -933,10 +1225,15 @@ function renderResult() {
       state.initialReading = "";
       state.chatMessages = [];
       state.conversationClosed = false;
-      state.initialReading = await fetchReading(output, revealReading);
+      const completedReading = await fetchReading(output, revealReading, controller.signal);
+      const { reading, summary } = splitReadingSummary(completedReading);
+      state.initialReading = reading || completedReading.trim();
+      output.textContent = state.initialReading;
+      saveCompletedReading(summary);
       button.textContent = "继续对话";
       button.dataset.action = "conversation";
     } catch (error) {
+      if (error?.name === "AbortError") return;
       revealReading();
       const message = error instanceof TypeError
         ? "暂时无法连接解读服务，请确认 Flask 已启动。"
@@ -946,7 +1243,8 @@ function renderResult() {
       output.textContent += `${output.textContent ? "\n\n" : ""}${message}`;
       button.textContent = "重新解读";
     } finally {
-      button.disabled = false;
+      if (activeReadingRequest === controller) activeReadingRequest = null;
+      if (document.body.contains(button)) button.disabled = false;
     }
   });
 }
