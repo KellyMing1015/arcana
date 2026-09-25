@@ -48,6 +48,7 @@ UI_FILES = {
     "card-back-cream-magic.png",
     "card-back-cream-magic-v2.png",
     "card-back-cream-magic-v3.png",
+    "card-back-cream-magic-v3-mobile.jpg",
     "rabbit-single-color.png",
     "dove-single-color.png",
 }

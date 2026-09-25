@@ -191,10 +191,25 @@ function loadHistoryRecords(userId) {
   try {
     const raw = JSON.parse(localStorage.getItem(historyKey(userId)) || "[]");
     const records = normalizeHistoryRecords(raw);
-    if (!Array.isArray(raw) || records.length !== raw.length) localStorage.setItem(historyKey(userId), JSON.stringify(records));
+    if (!Array.isArray(raw) || records.length !== raw.length || raw.some((item) => !item?.id)) {
+      localStorage.setItem(historyKey(userId), JSON.stringify(records));
+    }
     return records;
   } catch {
     return [];
+  }
+}
+
+function deleteHistoryRecord(userId, recordId) {
+  if (!userId || !recordId) return false;
+  try {
+    const records = loadHistoryRecords(userId);
+    const next = records.filter((record) => record.id !== recordId);
+    if (next.length === records.length) return false;
+    localStorage.setItem(historyKey(userId), JSON.stringify(next));
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -320,13 +335,19 @@ function historyThumbnails(record) {
 
 function historyTimeline(records) {
   if (!records.length) return `<div class="history-empty"><span>◇</span><strong>还没有历史牌阵</strong><p>用这位用户完成一次完整解读后，记录会自动出现在这里。</p></div>`;
-  return `<section class="history-timeline" aria-label="历史牌阵列表">${records.map((record) => `<article class="history-entry">
+  return `<section class="history-timeline" aria-label="历史牌阵列表">${records.map((record) => `<article class="history-entry" data-history-id="${escapeHTML(record.id)}">
     <span class="history-dot" aria-hidden="true"></span>
-    <div class="history-bubble">
-      <header><time>${escapeHTML(record.timestamp)}</time><span>${escapeHTML(record.spreadLabel)}</span></header>
-      <p class="history-question">Q // ${escapeHTML(record.question)}</p>
-      <blockquote>“${escapeHTML(record.summary)}”</blockquote>
-      ${historyThumbnails(record)}
+    <div class="history-swipe-shell">
+      <button class="history-delete-button" type="button" tabindex="-1" data-history-delete="${escapeHTML(record.id)}" aria-label="删除这条历史牌阵">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>
+        <span>删除</span>
+      </button>
+      <div class="history-bubble">
+        <header><time>${escapeHTML(record.timestamp)}</time><span>${escapeHTML(record.spreadLabel)}</span></header>
+        <p class="history-question">Q // ${escapeHTML(record.question)}</p>
+        <blockquote>“${escapeHTML(record.summary)}”</blockquote>
+        ${historyThumbnails(record)}
+      </div>
     </div>
   </article>`).join("")}</section>`;
 }
@@ -345,6 +366,7 @@ function historyPage() {
     </div>
     <div class="history-heading"><span class="eyebrow">TAROT ARCHIVE</span><h1>${escapeHTML(profile?.nickname || "历史牌阵")}</h1><p>历史记录</p></div>
     ${userProfiles.length ? historyTimeline(records) : `<div class="history-empty"><span>◇</span><strong>请先添加用户</strong><p>历史记录会按照用户档案分别保存。</p></div>`}
+    <p id="settings-feedback" class="settings-feedback" role="status" aria-live="polite"></p>
   </main>`;
 }
 
@@ -391,8 +413,61 @@ function renderSettings(message = "") {
       historyUserId = event.currentTarget.value;
       renderSettings();
     });
+    bindHistoryTimeline(overlay);
   }
   if (message) showFeedback(message);
+}
+
+function bindHistoryTimeline(overlay) {
+  let openEntry = null;
+  const revealWidth = 86;
+  const setEntryOpen = (entry, shouldOpen) => {
+    entry.classList.toggle("is-open", shouldOpen);
+    const button = entry.querySelector(".history-delete-button");
+    if (button) button.tabIndex = shouldOpen ? 0 : -1;
+  };
+  overlay.querySelectorAll(".history-entry").forEach((entry) => {
+    const bubble = entry.querySelector(".history-bubble");
+    let startX = 0;
+    let startY = 0;
+    let offset = 0;
+    let dragging = false;
+    bubble.addEventListener("pointerdown", (event) => {
+      if (openEntry && openEntry !== entry) setEntryOpen(openEntry, false);
+      startX = event.clientX;
+      startY = event.clientY;
+      offset = entry.classList.contains("is-open") ? -revealWidth : 0;
+      dragging = true;
+      bubble.setPointerCapture(event.pointerId);
+    });
+    bubble.addEventListener("pointermove", (event) => {
+      if (!dragging) return;
+      const dx = event.clientX - startX;
+      const dy = event.clientY - startY;
+      if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 8) {
+        dragging = false;
+        bubble.style.transform = "";
+        return;
+      }
+      const x = Math.max(-revealWidth, Math.min(0, offset + dx));
+      bubble.style.transform = `translateX(${x}px)`;
+    });
+    const finish = (event) => {
+      if (!dragging) return;
+      dragging = false;
+      const moved = event.clientX - startX;
+      const shouldOpen = offset + moved < -34;
+      bubble.style.transform = "";
+      setEntryOpen(entry, shouldOpen);
+      openEntry = shouldOpen ? entry : null;
+    };
+    bubble.addEventListener("pointerup", finish);
+    bubble.addEventListener("pointercancel", () => { dragging = false; bubble.style.transform = ""; });
+  });
+  overlay.querySelectorAll("[data-history-delete]").forEach((button) => button.addEventListener("click", () => {
+    if (deleteHistoryRecord(historyUserId, button.dataset.historyDelete)) renderSettings("这条历史牌阵已删除。");
+    else showFeedback("没有找到这条记录，请刷新后重试。", true);
+  }));
 }
 
 function bindUserManager(overlay) {

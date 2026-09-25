@@ -144,7 +144,7 @@ function go(stage) {
 }
 
 function backArt() {
-  return `<span class="back-ornament" aria-hidden="true"><img src="/assets/ui/card-back-cream-magic-v3.png" alt=""></span>`;
+  return `<span class="back-ornament" aria-hidden="true"><img src="/assets/ui/card-back-cream-magic-v3-mobile.jpg" width="682" height="1024" alt="" decoding="async"></span>`;
 }
 
 function renderQuestion() {
@@ -269,7 +269,7 @@ function renderShuffle() {
     activePointer = { id: event.pointerId, x: event.clientX, y: event.clientY };
     pile.setPointerCapture(event.pointerId);
     pile.classList.add("is-pressing");
-    holdTimer = later(beginShuffle, 500);
+    holdTimer = later(beginShuffle, 300);
   });
   pile.addEventListener("pointermove", (event) => {
     if (holdTimer === null || activePointer?.id !== event.pointerId) return;
@@ -289,7 +289,7 @@ function renderShuffle() {
     event.preventDefault();
     keyPending = true;
     pile.classList.add("is-pressing");
-    holdTimer = later(beginShuffle, 500);
+    holdTimer = later(beginShuffle, 300);
   });
   pile.addEventListener("keyup", (event) => {
     if (event.code !== "Space" || !keyPending) return;
@@ -560,7 +560,8 @@ function fanMetrics() {
     pixelsPerCard: radius * stepAngle,
     cx: width / 2,
     cy: 0,
-    centerY: compact ? Math.max(145, height * .34) : Math.max(165, height * .34),
+    // 移动端牌堆仍位于页面下半区，但圆心不能过低，否则卡牌下半截会被视窗裁掉。
+    centerY: compact ? Math.max(145, height * .3) : Math.max(195, height * .36),
   };
 }
 
@@ -610,10 +611,11 @@ function cardAtPoint(clientX, clientY, preferHovered = false) {
 }
 
 function applyFanFocus() {
+  const focusLift = fanMetrics().width < 560 ? 30 : 48;
   for (const zone of fanZones) {
     const isFocused = zone.visible && zone.card.id === state.hoveredId;
     zone.x = zone.baseX;
-    zone.y = zone.baseY - (isFocused ? 48 : 0);
+    zone.y = zone.baseY - (isFocused ? focusLift : 0);
     zone.scale = isFocused ? 1.1 : 1;
     zone.element.classList.toggle("is-hovered", isFocused);
     zone.element.style.opacity = zone.visible ? "1" : "0";
