@@ -830,7 +830,11 @@ async function streamToOutput(response, output, onPayload = () => {}, onFirstCon
     catch { throw new Error("解读流的数据格式不正确。"); }
     if (payload.error) throw new Error(payload.error);
     onPayload(payload);
-    if (typeof payload.content === "string") queueText(payload.content);
+    if (typeof payload.content === "string") {
+      // 后端会移除三牌框架标记；这里再兜底，避免任何内部协议文字出现在解读中。
+      const publicContent = payload.content.replace(/ARCANA\\?_FRAMEWORK\s*[:：]\s*[a-z_]+/gi, "");
+      queueText(publicContent);
+    }
     if (payload.done === true) {
       queueText("", true);
       done = true;

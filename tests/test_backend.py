@@ -96,6 +96,35 @@ class ReadingTests(unittest.TestCase):
         events = list(website.iter_reading_events(["ARCANA_FRAMEWORK:cause"], 3))
         self.assertEqual(events, [{"framework": "cause", "positions": ["问题", "原因", "建议"]}])
 
+    def test_formatted_framework_markers_never_reach_reading_text(self):
+        variants = (
+            "**ARCANA_FRAMEWORK:energy**\n完整解读",
+            "`ARCANA\\_FRAMEWORK:relationship`\n完整解读",
+            "```text\nARCANA_FRAMEWORK:choice\n```\n完整解读",
+        )
+        expected = ("energy", "relationship", "choice")
+        for response, framework in zip(variants, expected):
+            with self.subTest(response=response):
+                events = list(website.iter_reading_events([response], 3))
+                self.assertEqual(events[0], {
+                    "framework": framework,
+                    "positions": website.THREE_CARD_FRAMEWORKS[framework],
+                })
+                visible = "".join(event.get("content", "") for event in events)
+                self.assertNotIn("ARCANA", visible)
+                self.assertNotIn("FRAMEWORK", visible)
+                self.assertIn("完整解读", visible)
+
+    def test_framework_name_can_be_split_across_stream_chunks(self):
+        events = list(website.iter_reading_events([
+            "ARCANA_FRAMEWORK:e",
+            "nergy\n完整解读",
+        ], 3))
+        self.assertEqual(events, [
+            {"framework": "energy", "positions": website.THREE_CARD_FRAMEWORKS["energy"]},
+            {"content": "完整解读"},
+        ])
+
     def test_selected_page_provider_reaches_relay(self):
         provider = {"baseUrl": "https://relay.example/v1", "apiKey": "key", "model": "model"}
         response_stream = io.BytesIO(b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n')

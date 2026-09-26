@@ -77,6 +77,10 @@ THREE_CARD_FRAMEWORKS = {
     "energy": ["整体能量", "关键影响", "建议"],
 }
 DEFAULT_FRAMEWORK = "timeline"
+FRAMEWORK_MARKER_PATTERN = re.compile(
+    r"ARCANA(?:\\)?_FRAMEWORK\s*[:：]\s*([a-z_]+)",
+    re.IGNORECASE,
+)
 ZODIACS = {"白羊座", "金牛座", "双子座", "巨蟹座", "狮子座", "处女座", "天秤座", "天蝎座", "射手座", "摩羯座", "水瓶座", "双鱼座"}
 MAX_FOLLOW_UPS = 8
 CONVERSATION_TTL = 6 * 60 * 60
@@ -687,6 +691,37 @@ def sse(payload):
     return "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
 
 
+def extract_framework_opening(opening):
+    """读取并清除模型输出中的内部三牌框架标记。"""
+    match = FRAMEWORK_MARKER_PATTERN.search(opening)
+    if not match:
+        return DEFAULT_FRAMEWORK, opening, False
+
+    code = match.group(1).lower()
+    framework = code if code in THREE_CARD_FRAMEWORKS else DEFAULT_FRAMEWORK
+    line_start = opening.rfind("\n", 0, match.start()) + 1
+    line_break = opening.find("\n", match.end())
+    line_end = len(opening) if line_break == -1 else line_break
+    surrounding = opening[line_start:match.start()] + opening[match.end():line_end]
+
+    # 标记独占一行时连同 Markdown 包装一起删除；同一行还有正文时只删标记本身。
+    if re.fullmatch(r"[\s`*_>#\-—–:：]*", surrounding):
+        after_line = line_end + (1 if line_break != -1 else 0)
+        cleaned = opening[:line_start] + opening[after_line:]
+    else:
+        cleaned = opening[:match.start()] + opening[match.end():]
+
+    # 兼容模型把标记单独包在空代码框里的情况。
+    cleaned = re.sub(
+        r"\A[\ufeff\s]*```(?:text|plaintext)?[ \t]*\r?\n[ \t]*```[ \t]*(?:\r?\n|$)",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = FRAMEWORK_MARKER_PATTERN.sub("", cleaned).lstrip("\ufeff \t\r\n")
+    return framework, cleaned, True
+
+
 def iter_reading_events(chunks, spread):
     """从同一次流式回复取出三牌框架标记，再继续输出解读文字。"""
     chunks = iter(chunks)
@@ -698,30 +733,42 @@ def iter_reading_events(chunks, spread):
     opening = ""
     for chunk in chunks:
         opening = (opening + chunk).lstrip("\ufeff \t\r\n")
-        if "\n" not in opening and len(opening) < 180:
+        partial_match = FRAMEWORK_MARKER_PATTERN.search(opening)
+        if partial_match and partial_match.end() == len(opening):
+            partial_code = partial_match.group(1).lower()
+            if partial_code not in THREE_CARD_FRAMEWORKS and any(
+                code.startswith(partial_code) for code in THREE_CARD_FRAMEWORKS
+            ):
+                continue
+        framework, cleaned, found = extract_framework_opening(opening)
+        if found:
+            yield {"framework": framework, "positions": THREE_CARD_FRAMEWORKS[framework]}
+            if cleaned:
+                yield {"content": cleaned}
+            break
+        if "\n" not in opening and len(opening) < 360:
             continue
-        first_line, _, rest = opening.partition("\n")
-        match = re.fullmatch(r"ARCANA_FRAMEWORK:\s*([a-z_]+)\s*", first_line.strip())
-        framework = match.group(1) if match and match.group(1) in THREE_CARD_FRAMEWORKS else DEFAULT_FRAMEWORK
-        yield {"framework": framework, "positions": THREE_CARD_FRAMEWORKS[framework]}
-        if first_line.strip().startswith("ARCANA_FRAMEWORK:"):
-            if rest:
-                yield {"content": rest}
-        elif opening:
-            yield {"content": opening}
+        first_line = opening.partition("\n")[0].strip()
+        # 如果模型先输出代码框，再在下一行输出标记，继续等待下一段。
+        if re.fullmatch(r"```(?:text|plaintext)?", first_line, re.IGNORECASE) and opening.count("\n") < 3 and len(opening) < 360:
+            continue
+        yield {"framework": DEFAULT_FRAMEWORK, "positions": THREE_CARD_FRAMEWORKS[DEFAULT_FRAMEWORK]}
+        if cleaned:
+            yield {"content": cleaned}
         break
     else:
         if not opening:
             return
-        match = re.fullmatch(r"ARCANA_FRAMEWORK:\s*([a-z_]+)\s*", opening.strip())
-        framework = match.group(1) if match and match.group(1) in THREE_CARD_FRAMEWORKS else DEFAULT_FRAMEWORK
+        framework, cleaned, _found = extract_framework_opening(opening)
         yield {"framework": framework, "positions": THREE_CARD_FRAMEWORKS[framework]}
-        if not opening.strip().startswith("ARCANA_FRAMEWORK:"):
-            yield {"content": opening}
+        if cleaned:
+            yield {"content": cleaned}
         return
 
     for chunk in chunks:
-        yield {"content": chunk}
+        cleaned = FRAMEWORK_MARKER_PATTERN.sub("", chunk)
+        if cleaned:
+            yield {"content": cleaned}
 
 
 @app.route("/api/models", methods=["POST", "OPTIONS"])
