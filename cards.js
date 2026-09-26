@@ -54,6 +54,10 @@ export const MINOR_CARDS = suits.flatMap((suit) => ranks.map(([english, chinese,
 })));
 export const DECK = [...CARDS, ...MINOR_CARDS];
 
+export function cardImageURL(card) {
+  return `/assets/cards/${card.id}.webp?v=1`;
+}
+
 export function cardFace(card, className = "") {
-  return `<img class="card-art ${className}" src="./assets/cards/${card.id}.webp" width="960" height="1646" alt="${card.chinese}塔罗牌" draggable="false">`;
+  return `<img class="card-art ${className}" src="${cardImageURL(card)}" width="960" height="1646" alt="${card.chinese}塔罗牌" draggable="false" loading="eager" decoding="async" onerror="this.alt='';this.classList.add('card-art-load-error')">`;
 }

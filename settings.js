@@ -1,4 +1,6 @@
 const PROVIDER_STORAGE_KEY = "arcana.providers.v1";
+const INITIAL_PROVIDER_ID = "__arcana_initial_provider__";
+const INITIAL_PROVIDER_MODEL = "【CCMAX】claude-opus-5-5";
 const PROFILE_STORAGE_KEY = "arcana.user-profiles.v2";
 const LEGACY_PROFILE_STORAGE_KEY = "arcana.user-info.v1";
 const HISTORY_STORAGE_PREFIX = "arcana_history_";
@@ -81,7 +83,7 @@ function loadProfiles() {
 
 let settings = loadSettings();
 let userProfiles = loadProfiles();
-let selectedId = settings.activeId || settings.providers[0]?.id || null;
+let selectedId = settings.activeId || INITIAL_PROVIDER_ID;
 let activeSection = "home";
 let editingUserId = null;
 let historyUserId = userProfiles.find((profile) => profile.isActive)?.id || userProfiles[0]?.id || null;
@@ -127,12 +129,12 @@ export function getActiveProvider() {
 
 export function getActiveProviderLabel() {
   const item = settings.providers.find((provider) => provider.id === settings.activeId);
-  return item ? `${item.name} · ${item.model}` : "服务端默认配置";
+  return item ? `${item.name} · ${item.model}` : `初始供应商 · ${INITIAL_PROVIDER_MODEL}`;
 }
 
 export function getProviderChoices() {
   return [
-    { id: "", label: "服务端默认配置", active: !settings.activeId },
+    { id: "", label: `初始供应商 · ${INITIAL_PROVIDER_MODEL}`, active: !settings.activeId },
     ...settings.providers.map((item) => ({ id: item.id, label: `${item.name} · ${item.model}`, active: item.id === settings.activeId })),
   ];
 }
@@ -233,14 +235,29 @@ export function saveHistoryRecord(userId, record) {
 }
 
 function providerList() {
-  if (!settings.providers.length) return `<div class="settings-empty">还没有供应商。先添加第一个。</div>`;
-  return settings.providers.map((item) => `<button class="provider-list-item ${selectedId === item.id ? "is-selected" : ""}" type="button" data-provider-id="${escapeHTML(item.id)}">
+  const initial = `<button class="provider-list-item ${selectedId === INITIAL_PROVIDER_ID ? "is-selected" : ""}" type="button" data-provider-id="${INITIAL_PROVIDER_ID}">
+    <span class="provider-list-head"><strong>初始供应商</strong>${!settings.activeId ? "<small>使用中</small>" : ""}</span>
+    <span class="provider-list-model">${INITIAL_PROVIDER_MODEL}</span>
+  </button>`;
+  return initial + settings.providers.map((item) => `<button class="provider-list-item ${selectedId === item.id ? "is-selected" : ""}" type="button" data-provider-id="${escapeHTML(item.id)}">
     <span class="provider-list-head"><strong>${escapeHTML(item.name)}</strong>${settings.activeId === item.id ? "<small>使用中</small>" : ""}</span>
     <span class="provider-list-model">${escapeHTML(item.model)}</span>
   </button>`).join("");
 }
 
 function providerEditor() {
+  if (selectedId === INITIAL_PROVIDER_ID) {
+    return `<div class="settings-editor-heading">
+      <div><span class="eyebrow">BUILT-IN PROVIDER</span><h2>初始供应商</h2></div>
+      ${!settings.activeId ? "<span class=\"settings-active-badge\">正在使用</span>" : ""}
+    </div>
+    <div class="initial-provider-card">
+      <span>内置模型</span><strong>${INITIAL_PROVIDER_MODEL}</strong>
+      <p>由 Arcana 服务端统一提供，新用户不需要填写地址或 API Key。初始供应商不能编辑或删除。</p>
+    </div>
+    ${settings.activeId ? "<button class=\"settings-save\" id=\"activate-initial-provider\" type=\"button\">设为当前供应商</button>" : ""}
+    <p id="settings-feedback" class="settings-feedback" role="status" aria-live="polite"></p>`;
+  }
   const item = settings.providers.find((provider) => provider.id === selectedId);
   const editing = Boolean(item);
   return `<div class="settings-editor-heading">
@@ -330,7 +347,7 @@ function settingsHome() {
   return `<main class="settings-home">
     <div class="settings-home-heading"><span class="eyebrow">ARCANA SETTINGS</span><h1>设置</h1><p>管理解读模型，以及你愿意告诉塔罗师的个人背景。</p></div>
     <section class="settings-home-group" aria-label="设置项目">
-      <button type="button" data-settings-section="providers"><span><strong>供应商</strong><small>添加、编辑或切换解读模型</small></span><em>${settings.providers.length} 个配置　›</em></button>
+      <button type="button" data-settings-section="providers"><span><strong>供应商</strong><small>添加、编辑或切换解读模型</small></span><em>${settings.providers.length + 1} 个配置　›</em></button>
       <button type="button" data-settings-section="profile-list"><span><strong>用户信息</strong><small>管理不同用户的个人背景</small></span><em>${userProfiles.find((profile) => profile.isActive)?.nickname ? `${escapeHTML(userProfiles.find((profile) => profile.isActive).nickname)}　›` : `${userProfiles.length} 位用户　›`}</em></button>
       <button type="button" data-cloud-history><span><strong>历史牌阵</strong><small>查看登录账号的云端记录</small></span><em>查看记录　›</em></button>
     </section>
@@ -385,8 +402,7 @@ function providerSidebar() {
     <p>选择负责解读和继续对话的模型。</p>
     <div class="settings-list-heading"><strong>已添加</strong><button id="new-provider" type="button">＋ 添加</button></div>
     <div class="provider-list">${providerList()}</div>
-    <p class="settings-sidebar-note">未选择页面供应商时，使用服务端 .env 中的默认配置。</p>
-    ${settings.activeId ? "<button id=\"use-server-default\" class=\"settings-server-link\" type=\"button\">改用服务端默认配置 →</button>" : ""}
+    <p class="settings-sidebar-note">初始供应商由 Arcana 提供；你也可以添加自己的 OpenAI 兼容供应商。</p>
   </aside>`;
 }
 
@@ -597,11 +613,12 @@ function bindProviderEditor(overlay) {
     pendingDeleteId = null;
     renderSettings();
   }));
-  overlay.querySelector("#use-server-default")?.addEventListener("click", () => {
-    if (persistProviders({ ...settings, activeId: null })) renderSettings("已切换到服务端默认配置。");
+  overlay.querySelector("#activate-initial-provider")?.addEventListener("click", () => {
+    if (persistProviders({ ...settings, activeId: null })) { selectedId = INITIAL_PROVIDER_ID; renderSettings("已切换到初始供应商。"); }
   });
   const keyInput = overlay.querySelector("#provider-key");
   const toggle = overlay.querySelector("#toggle-key");
+  if (!keyInput || !toggle) return;
   toggle.addEventListener("click", () => {
     const visible = keyInput.type === "password";
     keyInput.type = visible ? "text" : "password";
@@ -680,7 +697,7 @@ function deleteProvider() {
   const activeId = settings.activeId === item.id ? null : settings.activeId;
   if (persistProviders({ providers, activeId })) {
     pendingDeleteId = null;
-    selectedId = providers[0]?.id || null;
+    selectedId = providers[0]?.id || INITIAL_PROVIDER_ID;
     renderSettings("供应商已删除。");
   }
 }
@@ -718,7 +735,7 @@ export function initializeProviderSettings(callback = () => {}) {
     if (![PROVIDER_STORAGE_KEY, PROFILE_STORAGE_KEY, LEGACY_PROFILE_STORAGE_KEY].includes(event.key) && !event.key?.startsWith(HISTORY_STORAGE_PREFIX)) return;
     settings = loadSettings();
     userProfiles = loadProfiles();
-    if (!settings.providers.some((item) => item.id === selectedId)) selectedId = settings.activeId || settings.providers[0]?.id || null;
+    if (selectedId !== null && selectedId !== INITIAL_PROVIDER_ID && !settings.providers.some((item) => item.id === selectedId)) selectedId = settings.activeId || INITIAL_PROVIDER_ID;
     onChange();
     renderSettings();
   });

@@ -68,6 +68,7 @@ button:focus-visible, textarea:focus-visible, a:focus-visible, [tabindex]:focus-
 .question-deco { position: absolute; z-index: 1; right: max(-45px,calc(50% - 750px)); top: 50%; transform: translateY(-50%) rotate(12deg); opacity: .2; pointer-events: none; }
 .question-deco-card { width: 280px; box-shadow: 0 18px 30px #10111322; }
 .card-art { display: block; width: 100%; height: auto; border-radius: 6px; }
+.card-art-load-error { color: transparent; background: linear-gradient(155deg, #f8eee9, #eee3ee); }
 .ritual-ornament { position: absolute; width: 22px; height: 22px; border: 1px solid #b7a4c6; border-radius: 50%; opacity: .55; }
 .ornament-one { left: 8%; top: 17%; }
 .ornament-two { right: 13%; bottom: 12%; width: 10px; height: 10px; }
@@ -582,6 +583,50 @@ button:focus-visible, textarea:focus-visible, a:focus-visible, [tabindex]:focus-
   .result-layout-10 .result-card-1 .result-card-label { transform: translateX(-31px); }
   .result-layout-10 .result-card-2 .result-card-label { transform: translateX(31px); }
   .result-actions { margin-top: 29px; }
+}
+
+/* 内置供应商只展示服务信息，不暴露或编辑服务端密钥。 */
+.initial-provider-card {
+  max-width: 560px;
+  margin: 24px 0 28px;
+  padding: 24px;
+  border: 1px solid rgba(185, 155, 170, .4);
+  border-radius: 20px;
+  background: rgba(255, 250, 243, .72);
+  box-shadow: 0 14px 34px rgba(84, 65, 94, .07);
+}
+.initial-provider-card > span { display: block; color: #958793; font-size: 9px; letter-spacing: .12em; }
+.initial-provider-card > strong { display: block; margin-top: 9px; color: var(--violet-deep); font-family: var(--serif); font-size: 20px; font-weight: 500; }
+.initial-provider-card > p { margin: 13px 0 0; color: #7f727d; font-size: 11px; line-height: 1.8; }
+
+/* 对话页沿用网站导航，只留下返回入口；轮次固定在底部操作区左侧。 */
+.conversation-screen {
+  position: relative;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+.conversation-back-floating {
+  position: absolute;
+  z-index: 5;
+  top: 16px;
+  left: clamp(14px, 2.8vw, 32px);
+  padding: 8px 3px;
+  color: #74677c;
+  font-size: 11px;
+}
+.conversation-messages { padding-top: 62px; }
+.conversation-round-count {
+  flex: none;
+  color: #8d7f8a;
+  font-size: 9px;
+  white-space: nowrap;
+}
+.conversation-compose-actions .follow-up-status { min-width: 0; }
+
+@media (max-width: 560px) {
+  .conversation-screen { grid-template-rows: minmax(0, 1fr) auto; }
+  .conversation-back-floating { top: 11px; left: 13px; }
+  .conversation-messages { padding-top: 53px; }
+  .conversation-round-count { font-size: 8px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

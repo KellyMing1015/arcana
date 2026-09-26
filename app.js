@@ -1,5 +1,5 @@
-import { DECK, cardFace } from "./cards.js";
-import { getActiveProvider, getActiveProviderLabel, getProviderChoices, getUserInfo, initializeProviderSettings, setActiveProvider } from "./settings.js";
+import { DECK, cardFace, cardImageURL } from "./cards.js";
+import { getActiveProvider, getUserInfo, initializeProviderSettings } from "./settings.js";
 import { initializeAuth, isLoggedIn, saveCloudReading } from "./auth.js";
 
 const app = document.querySelector("#app");
@@ -45,6 +45,7 @@ let fanOffset = 0;
 let fanMotionFrame = null;
 let activeReadingRequest = null;
 let activeConversationRequest = null;
+const cardImagePromises = new Map();
 
 function later(callback, milliseconds) {
   const id = setTimeout(() => { timers.delete(id); callback(); }, milliseconds);
@@ -138,6 +139,27 @@ function go(stage) {
 
 function backArt() {
   return `<span class="back-ornament" aria-hidden="true"><img src="/assets/ui/card-back-cream-magic-v3.png?v=5" width="1024" height="1536" alt="" decoding="async"></span>`;
+}
+
+function preloadCardImage(card) {
+  if (cardImagePromises.has(card.id)) return cardImagePromises.get(card.id);
+  const promise = new Promise((resolve) => {
+    const image = new Image();
+    let settled = false;
+    const finish = (loaded) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (!loaded) cardImagePromises.delete(card.id);
+      resolve(loaded);
+    };
+    const timeout = setTimeout(() => finish(false), 6000);
+    image.onload = () => (image.decode ? image.decode().catch(() => {}) : Promise.resolve()).finally(() => finish(true));
+    image.onerror = () => finish(false);
+    image.src = cardImageURL(card);
+  });
+  cardImagePromises.set(card.id, promise);
+  return promise;
 }
 
 function renderQuestion() {
@@ -621,12 +643,18 @@ function applyFanFocus() {
 function setHover(id) {
   if (state.hoveredId === id) return;
   state.hoveredId = id;
+  if (id) {
+    const card = state.deck.find((item) => item.id === id);
+    if (card) preloadCardImage(card);
+  }
   applyFanFocus();
 }
 
 async function selectCard(card) {
   if (!card || state.isSelecting || state.stage !== "fan") return;
   state.isSelecting = true;
+  await preloadCardImage(card);
+  if (state.stage !== "fan") return;
   const index = state.selected.length;
   const element = document.querySelector(`[data-card-id="${card.id}"]`);
   const tray = document.querySelector("#selection-tray");
@@ -883,18 +911,6 @@ async function fetchFollowUp(message, images, output, signal, onFirstContent) {
   return completion;
 }
 
-function providerOptionsHTML() {
-  return getProviderChoices().map((item) => `<option value="${escapeHTML(item.id)}">${escapeHTML(item.label)}</option>`).join("");
-}
-
-function refreshResultProviderSelect() {
-  const select = document.querySelector("#result-provider");
-  if (!select) return;
-  const choices = getProviderChoices();
-  select.innerHTML = choices.map((item) => `<option value="${escapeHTML(item.id)}">${escapeHTML(item.label)}</option>`).join("");
-  select.value = choices.find((item) => item.active)?.id || "";
-}
-
 function safeLocalImage(value) {
   return typeof value === "string" && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(value) ? value : "";
 }
@@ -1120,14 +1136,7 @@ function renderConversation() {
     { role: "assistant", text: "这次牌面我已经读完了。你可以继续问我，牌面和完整解读收在右上角。" },
   ];
   app.innerHTML = `<section class="conversation-screen screen-enter">
-    <header class="conversation-page-header">
-      <button class="conversation-back" id="back-to-reading" type="button">← 解读</button>
-      <div class="conversation-title"><strong>Arcana 塔罗师</strong><small id="follow-up-count">${remaining ? `还可以追问 ${remaining} 轮` : "本次牌局已完成 8 轮追问"}</small></div>
-      <div class="conversation-header-actions">
-        <label class="conversation-provider"><span>供应商</span><select id="result-provider" aria-label="切换后续对话使用的供应商">${providerOptionsHTML()}</select></label>
-        <button class="reading-drawer-toggle" id="open-reading-drawer" type="button" aria-label="查看牌面与完整解读"><span class="mini-card-icon" aria-hidden="true"></span></button>
-      </div>
-    </header>
+    <button class="conversation-back conversation-back-floating" id="back-to-reading" type="button">← 回到解读</button>
     <div class="conversation-messages" id="conversation-messages" aria-live="polite">${[...intro, ...state.chatMessages].map(conversationBubble).join("")}</div>
     <form id="follow-up-form" class="conversation-compose ${state.conversationClosed ? "is-closed" : ""}">
       <div id="follow-up-image-preview" class="follow-up-image-preview" hidden></div>
@@ -1136,26 +1145,13 @@ function renderConversation() {
         <label class="sr-only" for="follow-up-input">继续追问</label>
         <textarea id="follow-up-input" maxlength="2000" rows="1" placeholder="${state.conversationClosed ? "这次牌局已经收牌" : "把你还没说完的话写在这里……"}" ${state.conversationClosed ? "disabled" : ""}></textarea>
       </div>
-      <div class="conversation-compose-actions"><p id="follow-up-status" class="follow-up-status" role="status">${state.conversationClosed ? "这次对话已经结束。" : ""}</p><button id="end-conversation" class="end-conversation" type="button" ${state.conversationClosed ? "disabled" : ""}>结束对话</button><button id="stop-follow-up" class="stop-follow-up" type="button" hidden>■ 暂停</button><button class="send-follow-up" type="submit" ${state.conversationClosed ? "disabled" : ""}>发送</button></div>
+      <div class="conversation-compose-actions"><small id="follow-up-count" class="conversation-round-count">${remaining ? `还可以追问 ${remaining} 轮` : "本次牌局已完成 8 轮追问"}</small><p id="follow-up-status" class="follow-up-status" role="status">${state.conversationClosed ? "这次对话已经结束。" : ""}</p><button id="end-conversation" class="end-conversation" type="button" ${state.conversationClosed ? "disabled" : ""}>结束对话</button><button id="stop-follow-up" class="stop-follow-up" type="button" hidden>■ 暂停</button><button class="send-follow-up" type="submit" ${state.conversationClosed ? "disabled" : ""}>发送</button></div>
     </form>
-  </section>${readingDrawerHTML()}`;
-  refreshResultProviderSelect();
+  </section>`;
   const screen = document.querySelector(".conversation-screen");
   const messages = screen.querySelector("#conversation-messages");
   messages.scrollTop = messages.scrollHeight;
   screen.querySelector("#back-to-reading").addEventListener("click", () => go("result"));
-  screen.querySelector("#result-provider").addEventListener("change", (event) => {
-    if (!setActiveProvider(event.currentTarget.value)) { refreshResultProviderSelect(); return; }
-    screen.querySelector("#follow-up-status").textContent = `后续追问将使用：${getActiveProviderLabel()}`;
-  });
-  const drawer = document.querySelector("#reading-drawer");
-  const openDrawer = () => { drawer.hidden = false; screen.inert = true; document.querySelector("#close-reading-drawer").focus(); };
-  const closeDrawer = () => { drawer.hidden = true; screen.inert = false; screen.querySelector("#open-reading-drawer").focus(); };
-  screen.querySelector("#open-reading-drawer").addEventListener("click", openDrawer);
-  document.querySelector("#close-reading-drawer").addEventListener("click", closeDrawer);
-  drawer.addEventListener("click", (event) => { if (event.target === drawer) closeDrawer(); });
-  stageListeners = new AbortController();
-  window.addEventListener("keydown", (event) => { if (event.key === "Escape" && !drawer.hidden) closeDrawer(); }, { signal: stageListeners.signal });
   bindConversationForm(screen);
 }
 
@@ -1264,10 +1260,6 @@ function render() {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-initializeProviderSettings(() => {
-  const indicator = document.querySelector("#provider-indicator");
-  if (indicator) indicator.textContent = getActiveProviderLabel();
-  refreshResultProviderSelect();
-});
+initializeProviderSettings(() => {});
 initializeAuth(() => {});
 render();
