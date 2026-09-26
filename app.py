@@ -2,11 +2,14 @@
 
 import base64
 import binascii
+import importlib.util
 import json
 import os
 import re
 import secrets
 import sqlite3
+import subprocess
+import sys
 import time
 import uuid
 from datetime import datetime
@@ -15,6 +18,41 @@ from pathlib import Path
 from threading import Lock
 from zoneinfo import ZoneInfo
 
+
+ROOT = Path(__file__).resolve().parent
+
+
+def ensure_runtime_dependencies():
+    """在旧 VPS 环境首次启动新版代码时补齐新增的运行依赖。"""
+    required_modules = ("flask", "flask_bcrypt", "dotenv")
+    missing = [name for name in required_modules if importlib.util.find_spec(name) is None]
+    if not missing:
+        return
+
+    requirements = ROOT / "requirements.txt"
+    print(f"Arcana 检测到缺少依赖：{', '.join(missing)}，正在自动安装……", flush=True)
+    try:
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                "-r",
+                str(requirements),
+            ],
+            cwd=ROOT,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise RuntimeError(
+            "Arcana 自动安装依赖失败，请检查 VPS 是否能访问 Python 软件源后重新启动。"
+        ) from error
+
+
+ensure_runtime_dependencies()
+
 from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, request, send_from_directory, session as flask_session, stream_with_context
 from flask_bcrypt import Bcrypt
@@ -22,7 +60,6 @@ from flask_bcrypt import Bcrypt
 from llm import LLMError, friendly_error, iter_chat_text, list_models, open_chat_stream
 
 
-ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env")
 DATABASE_PATH = ROOT / "arcana.db"
 SYSTEM_PROMPT = (ROOT / "prompts" / "system.md").read_text(encoding="utf-8").strip()
