@@ -148,6 +148,14 @@ export function getUserInfo() {
   return active ? { enabled: true, ...active } : { enabled: false };
 }
 
+export function getUserProfiles() {
+  return userProfiles.map((profile) => ({
+    id: profile.id,
+    nickname: profile.nickname || "未命名用户",
+    isActive: profile.isActive,
+  }));
+}
+
 function historyKey(userId) { return `${HISTORY_STORAGE_PREFIX}${userId}`; }
 
 function historyCutoff() {

@@ -157,9 +157,9 @@ class ReadingTests(unittest.TestCase):
         with patch.object(website, "open_chat_stream", side_effect=fake_upstream):
             self.client.post("/api/register", json={"email": "reader@example.com", "nickname": "小欧", "password": "password123"})
             self.client.post("/api/reading", json={**self.payload, "recordHistory": True, "userInfo": {"enabled": True, "id": "user-1", "nickname": "小欧"}}, buffered=True)
+            self.client.post("/api/reading", json={**self.payload, "recordHistory": True, "userInfo": {"enabled": False}}, buffered=True)
             self.client.post("/api/logout")
             self.client.post("/api/reading", json={**self.payload, "recordHistory": False}, buffered=True)
-            self.client.post("/api/reading", json={**self.payload, "recordHistory": True, "userInfo": {"enabled": False}}, buffered=True)
         self.assertIn("【总结】", captured[0])
         self.assertNotIn("【总结】", captured[1])
         self.assertNotIn("【总结】", captured[2])
@@ -345,6 +345,8 @@ class AccountTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/readings").status_code, 401)
         self.register()
         record = {
+            "profile_id": "profile-xiao-ou",
+            "profile_nickname": "小欧",
             "question": "我该怎么做？",
             "spread_type": "单牌",
             "cards": [{"id": "fool", "chinese": "愚者", "position": "此刻", "reversed": False}],
@@ -361,9 +363,44 @@ class AccountTests(unittest.TestCase):
         self.assertEqual(migrated.status_code, 200)
         readings = self.client.get("/api/readings").json["readings"]
         self.assertEqual({item["question"] for item in readings}, {"我该怎么做？", "旧问题"})
+        self.assertTrue(all(item["profile_id"] == "profile-xiao-ou" for item in readings))
         self.client.post("/api/logout")
         self.register(email="other@example.com", nickname="另一位")
         self.assertEqual(self.client.get("/api/readings").json["readings"], [])
+
+    def test_user_can_delete_only_their_own_reading(self):
+        self.register()
+        record = {
+            "profile_id": "profile-xiao-ou",
+            "profile_nickname": "小欧",
+            "question": "该结束了吗？",
+            "spread_type": "单牌",
+            "cards": [{"id": "fool", "chinese": "愚者", "position": "此刻", "reversed": False}],
+            "summary": "停止消耗，今天做出决定。",
+            "full_reading": "完整解读内容。",
+        }
+        reading_id = self.client.post("/api/readings", json=record).json["id"]
+        self.client.post("/api/logout")
+        self.register(email="other@example.com", nickname="另一位")
+        self.assertEqual(self.client.delete(f"/api/readings/{reading_id}").status_code, 404)
+        self.client.post("/api/logout")
+        self.client.post("/api/login", json={"email": "reader@example.com", "password": "correct-password"})
+        deleted = self.client.delete(f"/api/readings/{reading_id}")
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(self.client.get("/api/readings").json["readings"], [])
+
+    def test_new_reading_requires_an_enabled_profile_owner(self):
+        self.register()
+        record = {
+            "question": "我该怎么做？",
+            "spread_type": "单牌",
+            "cards": [{"id": "fool", "chinese": "愚者", "position": "此刻", "reversed": False}],
+            "summary": "今天完成第一步。",
+            "full_reading": "完整解读内容。",
+        }
+        response = self.client.post("/api/readings", json=record)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("启用一位用户", response.json["error"])
 
 
 class RelayTests(unittest.TestCase):

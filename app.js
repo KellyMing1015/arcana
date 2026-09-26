@@ -1,6 +1,6 @@
 import { DECK, cardFace } from "./cards.js";
 import { getActiveProvider, getActiveProviderLabel, getProviderChoices, getUserInfo, initializeProviderSettings, setActiveProvider } from "./settings.js";
-import { getCurrentUser, initializeAuth, isLoggedIn, saveCloudReading } from "./auth.js";
+import { initializeAuth, isLoggedIn, saveCloudReading } from "./auth.js";
 
 const app = document.querySelector("#app");
 const state = {
@@ -80,19 +80,28 @@ function escapeHTML(value) {
 
 function splitReadingSummary(value) {
   const text = String(value || "").trim();
-  const match = text.match(/\s*【总结】\s*[:：]?\s*([\s\S]+)$/);
+  const match = text.match(/\s*(?:【\s*总结\s*】|总结)\s*[:：]?\s*([\s\S]+)$/);
   if (!match) return { reading: text, summary: "" };
+  const rawSummary = match[1].trim();
+  const characters = Array.from(rawSummary);
+  let summary = rawSummary;
+  if (characters.length > 100) {
+    const firstHundred = characters.slice(0, 100).join("");
+    const sentenceEnd = Math.max(firstHundred.lastIndexOf("。"), firstHundred.lastIndexOf("！"), firstHundred.lastIndexOf("？"));
+    summary = sentenceEnd >= 20 ? firstHundred.slice(0, sentenceEnd + 1) : firstHundred;
+  }
   return {
     reading: text.slice(0, match.index).trim(),
-    // 提示词要求模型控制在 100 字内；这里保留模型返回的完整句子，避免机械截断半句话。
-    summary: match[1].trim(),
+    summary,
   };
 }
 
 async function saveCompletedReading(summary, fullReading) {
-  if (!isLoggedIn()) return false;
+  if (!isLoggedIn() || !state.userInfo?.enabled || !state.userInfo?.id) return false;
   const spreadLabel = state.spread === 1 ? "单牌" : state.spread === 3 ? "三牌阵" : "凯尔特十字";
   return saveCloudReading({
+    profile_id: state.userInfo.id,
+    profile_nickname: state.userInfo.nickname || "未命名用户",
     question: state.question,
     spread_type: spreadLabel,
     summary,
@@ -833,7 +842,7 @@ async function fetchReading(output, onFirstContent, signal) {
         reversed: card.reversed,
       })),
       userInfo: state.userInfo,
-      recordHistory: true,
+      recordHistory: isLoggedIn() && Boolean(state.userInfo?.enabled && state.userInfo?.id),
       ...(provider ? { provider } : {}),
     }),
     signal,
@@ -1214,13 +1223,15 @@ function renderResult() {
       state.initialReading = reading || completedReading.trim();
       output.textContent = state.initialReading;
       const note = actions.querySelector("p");
-      if (isLoggedIn()) {
+      if (isLoggedIn() && state.userInfo?.enabled && state.userInfo?.id) {
         try {
           await saveCompletedReading(summary, state.initialReading);
-          note.textContent = `已保存到 ${getCurrentUser().nickname} 的云端历史。`;
+          note.textContent = `已保存到 ${state.userInfo.nickname || "当前用户"} 名下的云端历史。`;
         } catch (saveError) {
           note.textContent = `解读已完成，但云端保存失败：${saveError.message}`;
         }
+      } else if (isLoggedIn()) {
+        note.textContent = "启用一位用户后，本次牌阵才会保存到她的名下";
       } else {
         note.textContent = "登录后可保存本次记录";
       }

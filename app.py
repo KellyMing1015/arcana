@@ -94,6 +94,8 @@ def initialize_database():
             CREATE TABLE IF NOT EXISTS readings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
+                profile_id TEXT,
+                profile_nickname TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 question TEXT,
                 spread_type TEXT,
@@ -106,14 +108,24 @@ def initialize_database():
             CREATE INDEX IF NOT EXISTS idx_readings_user_created
             ON readings(user_id, created_at DESC, id DESC);
         """)
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(readings)")}
+        if "profile_id" not in columns:
+            connection.execute("ALTER TABLE readings ADD COLUMN profile_id TEXT")
+        if "profile_nickname" not in columns:
+            connection.execute("ALTER TABLE readings ADD COLUMN profile_nickname TEXT")
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_readings_user_profile_created "
+            "ON readings(user_id, profile_id, created_at DESC, id DESC)"
+        )
 
 
 initialize_database()
 
 SUMMARY_INSTRUCTION = (
-    "在完成完整解读后，另起一行输出【总结】标记，后跟一段100字以内的总结。"
+    "在完成完整解读后，必须在最后另起一行，严格按‘【总结】总结正文’的格式输出一段100字以内的独立总结。"
     "总结必须包含明确的结论和具体的行动建议，禁止使用‘可能’‘也许’‘视情况而定’等模糊表达。"
-    "直接告诉提问者该怎么做。必须使用完整句子并以句号结尾，输出前检查总字数，绝对不能在句子中间截断。"
+    "直接告诉提问者该怎么做。必须使用完整句子并以句号结尾，输出前检查总结正文总字数，绝对不能在句子中间截断。"
+    "【总结】只允许在全文最后出现一次，不能省略，也不能把完整解读复制成总结。"
 )
 TIME_REASONING_RULE = (
     "时间规则：凡是涉及‘今天’‘现在’‘多久’‘几天’‘几周’‘几个月’‘最近’等时间判断，"
@@ -136,7 +148,7 @@ def add_cors_headers(response):
     origin = request.headers.get("Origin")
     if origin and allowed_origin():
         response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
         response.headers["Access-Control-Allow-Credentials"] = "true"
         response.headers["Vary"] = "Origin"
@@ -199,6 +211,8 @@ def normalize_reading_payload(payload, migration=False):
     cards = payload.get("cards")
     summary = payload.get("summary", "")
     full_reading = payload.get("full_reading", payload.get("fullReading", ""))
+    profile_id = payload.get("profile_id", payload.get("profileId", ""))
+    profile_nickname = payload.get("profile_nickname", payload.get("profileNickname", ""))
     if not isinstance(question, str) or len(question.strip()) > 2000:
         raise ValueError("问题内容无效。")
     if spread_type not in SPREAD_TYPES:
@@ -230,6 +244,10 @@ def normalize_reading_payload(payload, migration=False):
         raise ValueError("总结内容无效。")
     if not isinstance(full_reading, str) or len(full_reading.strip()) > 100000:
         raise ValueError("完整解读内容无效。")
+    if not isinstance(profile_id, str) or len(profile_id.strip()) > 100 or any(ord(char) < 32 for char in profile_id):
+        raise ValueError("用户档案标识无效。")
+    if not isinstance(profile_nickname, str) or len(profile_nickname.strip()) > 80:
+        raise ValueError("用户档案昵称无效。")
     created_at = None
     if migration:
         legacy_created = payload.get("createdAt")
@@ -247,12 +265,14 @@ def normalize_reading_payload(payload, migration=False):
         "cards": json.dumps(safe_cards, ensure_ascii=False),
         "summary": summary.strip(),
         "full_reading": full_reading.strip(),
+        "profile_id": profile_id.strip(),
+        "profile_nickname": profile_nickname.strip(),
     }
 
 
 def insert_reading(connection, user_id, record):
-    columns = "user_id, question, spread_type, cards, summary, full_reading"
-    values = [user_id, record["question"], record["spread_type"], record["cards"], record["summary"], record["full_reading"]]
+    columns = "user_id, profile_id, profile_nickname, question, spread_type, cards, summary, full_reading"
+    values = [user_id, record["profile_id"], record["profile_nickname"], record["question"], record["spread_type"], record["cards"], record["summary"], record["full_reading"]]
     if record.get("created_at"):
         columns += ", created_at"
         values.append(record["created_at"])
@@ -268,6 +288,8 @@ def reading_json(row):
         cards = []
     return {
         "id": row["id"],
+        "profile_id": row["profile_id"] or "",
+        "profile_nickname": row["profile_nickname"] or "",
         "created_at": row["created_at"],
         "question": row["question"] or "",
         "spread_type": row["spread_type"] or "",
@@ -364,7 +386,7 @@ def cloud_readings(user):
     if request.method == "GET":
         with database_connection() as connection:
             rows = connection.execute(
-                "SELECT id, created_at, question, spread_type, cards, summary, full_reading FROM readings WHERE user_id = ? ORDER BY created_at DESC, id DESC",
+                "SELECT id, profile_id, profile_nickname, created_at, question, spread_type, cards, summary, full_reading FROM readings WHERE user_id = ? ORDER BY created_at DESC, id DESC",
                 (user["id"],),
             ).fetchall()
         return jsonify(readings=[reading_json(row) for row in rows])
@@ -372,9 +394,26 @@ def cloud_readings(user):
         record = normalize_reading_payload(request.get_json(silent=True))
     except ValueError as error:
         return jsonify(error=str(error)), 400
+    if not record["profile_id"] or not record["profile_nickname"]:
+        return jsonify(error="请先在用户信息中启用一位用户，再保存历史牌阵。"), 400
     with database_connection() as connection:
         reading_id = insert_reading(connection, user["id"], record)
     return jsonify(success=True, id=reading_id), 201
+
+
+@app.route("/api/readings/<int:reading_id>", methods=["DELETE", "OPTIONS"])
+@login_required
+def delete_cloud_reading(user, reading_id):
+    if request.method == "OPTIONS":
+        return Response(status=204)
+    with database_connection() as connection:
+        cursor = connection.execute(
+            "DELETE FROM readings WHERE id = ? AND user_id = ?",
+            (reading_id, user["id"]),
+        )
+    if cursor.rowcount == 0:
+        return jsonify(error="没有找到这条历史牌阵。"), 404
+    return jsonify(success=True)
 
 
 @app.route("/api/readings/migrate", methods=["POST", "OPTIONS"])
@@ -393,8 +432,8 @@ def migrate_readings(user):
     with database_connection() as connection:
         for record in normalized:
             existing = connection.execute(
-                "SELECT id FROM readings WHERE user_id = ? AND question = ? AND spread_type = ? AND cards = ? AND summary = ? LIMIT 1",
-                (user["id"], record["question"], record["spread_type"], record["cards"], record["summary"]),
+                "SELECT id FROM readings WHERE user_id = ? AND profile_id = ? AND question = ? AND spread_type = ? AND cards = ? AND summary = ? LIMIT 1",
+                (user["id"], record["profile_id"], record["question"], record["spread_type"], record["cards"], record["summary"]),
             ).fetchone()
             if existing is None:
                 insert_reading(connection, user["id"], record)
@@ -677,7 +716,7 @@ def reading():
         record_history = payload.get("recordHistory", False)
         if type(record_history) is not bool:
             raise LLMError("历史记录选项格式不正确。", 400)
-        record_history = record_history and current_user() is not None
+        record_history = record_history and current_user() is not None and user_info is not None
         messages = build_messages(question, spread, cards, user_info, include_summary=record_history)
         upstream = open_chat_stream(messages, payload.get("provider"))
         chunks = iter_reading_events(iter_chat_text(upstream), spread)

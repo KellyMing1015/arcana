@@ -1,7 +1,10 @@
+import { getUserProfiles } from "./settings.js";
+
 const LOCAL_HISTORY_PREFIX = "arcana_history_";
 
 let authUser = null;
 let onAuthChange = () => {};
+let cloudHistoryProfileId = null;
 
 function escapeHTML(value) {
   return String(value).replace(/[&<>"']/g, (character) => ({
@@ -39,9 +42,16 @@ function localHistoryEntries() {
 }
 
 function migrationRecords(entries) {
-  return entries.flatMap(({ records }) => records).flatMap((record) => {
+  const names = new Map(getUserProfiles().map((profile) => [profile.id, profile.nickname]));
+  return entries.flatMap(({ key, records }) => {
+    const profileId = key.slice(LOCAL_HISTORY_PREFIX.length);
+    const profileNickname = names.get(profileId) || "未命名用户";
+    return records.map((record) => ({ record, profileId, profileNickname }));
+  }).flatMap(({ record, profileId, profileNickname }) => {
     if (!record || typeof record !== "object" || !Array.isArray(record.cards)) return [];
     return [{
+      profile_id: profileId,
+      profile_nickname: profileNickname,
       createdAt: record.createdAt,
       question: record.question || "",
       spread: record.spread,
@@ -187,22 +197,125 @@ function cloudCards(record) {
 
 function historyContent(records) {
   if (!records.length) return `<div class="history-empty"><span>◇</span><strong>还没有历史牌阵</strong><p>完成一次解读后，它会自动保存在这里。</p></div>`;
-  return `<section class="history-timeline">${records.map((record) => `<article class="history-entry cloud-history-entry">
+  return `<section class="history-timeline" aria-label="历史牌阵列表">${records.map((record) => `<article class="history-entry cloud-history-entry" data-history-id="${record.id}">
     <span class="history-dot" aria-hidden="true"></span>
-    <div class="history-bubble">
-      <header><time>${escapeHTML(formatCloudTime(record.created_at))}</time><span>${escapeHTML(record.spread_type)}</span></header>
-      <p class="history-question">Q // ${escapeHTML(record.question)}</p>
-      <blockquote>“${escapeHTML(record.summary || record.full_reading.slice(0, 120))}”</blockquote>
-      ${cloudCards(record)}
-      ${record.full_reading ? `<details class="cloud-reading-details"><summary>查看完整解读</summary><p>${escapeHTML(record.full_reading)}</p></details>` : ""}
+    <div class="history-swipe-shell">
+      <button class="history-delete-button" type="button" tabindex="-1" data-cloud-history-delete="${record.id}" aria-label="删除这条历史牌阵">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>
+        <span>删除</span>
+      </button>
+      <div class="history-bubble">
+        <header><time>${escapeHTML(formatCloudTime(record.created_at))}</time><span>${escapeHTML(record.spread_type)}</span></header>
+        <p class="history-question">Q // ${escapeHTML(record.question)}</p>
+        <blockquote>“${record.summary ? escapeHTML(record.summary) : "这条旧记录没有独立总结。"}”</blockquote>
+        ${cloudCards(record)}
+        ${record.full_reading ? `<details class="cloud-reading-details"><summary>查看完整解读</summary><p>${escapeHTML(record.full_reading)}</p></details>` : ""}
+      </div>
     </div>
   </article>`).join("")}</section>`;
+}
+
+function bindCloudHistory(overlay, onDeleted = () => {}) {
+  let openEntry = null;
+  const revealWidth = 86;
+  const setEntryOpen = (entry, shouldOpen) => {
+    entry.classList.toggle("is-open", shouldOpen);
+    const button = entry.querySelector(".history-delete-button");
+    if (button) button.tabIndex = shouldOpen ? 0 : -1;
+  };
+  overlay.querySelectorAll(".cloud-history-entry").forEach((entry) => {
+    const bubble = entry.querySelector(".history-bubble");
+    let startX = 0;
+    let startY = 0;
+    let offset = 0;
+    let dragging = false;
+    bubble.addEventListener("pointerdown", (event) => {
+      if (event.target.closest("details")) return;
+      if (openEntry && openEntry !== entry) setEntryOpen(openEntry, false);
+      startX = event.clientX;
+      startY = event.clientY;
+      offset = entry.classList.contains("is-open") ? -revealWidth : 0;
+      dragging = true;
+      bubble.setPointerCapture(event.pointerId);
+    });
+    bubble.addEventListener("pointermove", (event) => {
+      if (!dragging) return;
+      const dx = event.clientX - startX;
+      const dy = event.clientY - startY;
+      if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 8) {
+        dragging = false;
+        bubble.style.transform = "";
+        return;
+      }
+      bubble.style.transform = `translateX(${Math.max(-revealWidth, Math.min(0, offset + dx))}px)`;
+    });
+    const finish = (event) => {
+      if (!dragging) return;
+      dragging = false;
+      const shouldOpen = offset + event.clientX - startX < -34;
+      bubble.style.transform = "";
+      setEntryOpen(entry, shouldOpen);
+      openEntry = shouldOpen ? entry : null;
+    };
+    bubble.addEventListener("pointerup", finish);
+    bubble.addEventListener("pointercancel", () => { dragging = false; bubble.style.transform = ""; });
+  });
+  overlay.querySelectorAll("[data-cloud-history-delete]").forEach((button) => button.addEventListener("click", async () => {
+    const entry = button.closest(".history-entry");
+    button.disabled = true;
+    try {
+      await requestJSON(`/api/readings/${button.dataset.cloudHistoryDelete}`, { method: "DELETE" });
+      onDeleted(Number(button.dataset.cloudHistoryDelete));
+      entry.remove();
+      const remaining = overlay.querySelectorAll(".cloud-history-entry").length;
+      overlay.querySelector(".history-heading p").textContent = `${remaining} 条云端记录`;
+      if (!remaining) overlay.querySelector("#cloud-history-list").innerHTML = historyContent([]);
+    } catch (error) {
+      button.disabled = false;
+      window.alert(error.message);
+    }
+  }));
+}
+
+function cloudHistoryProfiles(records) {
+  const choices = new Map(getUserProfiles().map((profile) => [profile.id, profile.nickname]));
+  records.forEach((record) => {
+    if (record.profile_id && !choices.has(record.profile_id)) {
+      choices.set(record.profile_id, record.profile_nickname || "未命名用户");
+    }
+  });
+  return [...choices].map(([id, nickname]) => ({ id, nickname }));
+}
+
+function renderCloudHistory(overlay, records) {
+  const choices = cloudHistoryProfiles(records);
+  const activeProfile = getUserProfiles().find((profile) => profile.isActive);
+  if (!choices.some((profile) => profile.id === cloudHistoryProfileId)) {
+    cloudHistoryProfileId = choices.some((profile) => profile.id === activeProfile?.id)
+      ? activeProfile.id
+      : choices[0]?.id || null;
+  }
+  const picker = overlay.querySelector("#cloud-history-picker");
+  picker.innerHTML = choices.length
+    ? `<label class="history-user-picker cloud-history-user-picker"><span>选择用户</span><select aria-label="选择要查看的用户">${choices.map((profile) => `<option value="${escapeHTML(profile.id)}" ${profile.id === cloudHistoryProfileId ? "selected" : ""}>${escapeHTML(profile.nickname)}</option>`).join("")}</select></label>`
+    : `<span>${escapeHTML(authUser?.nickname || "已登录")}</span>`;
+  const visible = records.filter((record) => record.profile_id && record.profile_id === cloudHistoryProfileId);
+  overlay.querySelector(".history-heading p").textContent = `${visible.length} 条云端记录`;
+  overlay.querySelector("#cloud-history-list").innerHTML = historyContent(visible);
+  bindCloudHistory(overlay, (deletedId) => {
+    const index = records.findIndex((record) => record.id === deletedId);
+    if (index !== -1) records.splice(index, 1);
+  });
+  picker.querySelector("select")?.addEventListener("change", (event) => {
+    cloudHistoryProfileId = event.currentTarget.value;
+    renderCloudHistory(overlay, records);
+  });
 }
 
 async function openHistory() {
   const overlay = createOverlay("历史牌阵");
   location.hash = "history";
-  overlay.innerHTML = `<main class="cloud-history-page"><header><button class="auth-close" type="button">← 返回设置</button><span>${authUser ? escapeHTML(authUser.nickname) : "未登录"}</span></header><div class="history-heading"><span class="eyebrow">TAROT ARCHIVE</span><h1>历史牌阵</h1><p>${authUser ? "正在读取云端记录…" : "0 条云端记录"}</p></div><div id="cloud-history-list">${authUser ? "" : `<div class="history-empty"><span>◇</span><strong>还没有历史牌阵</strong><p>登录后，完成的解读会自动保存在这里。</p><button class="history-login-button" type="button">登录 Arcana</button></div>`}</div></main>`;
+  overlay.innerHTML = `<main class="cloud-history-page"><header><button class="auth-close" type="button">← 返回设置</button><div id="cloud-history-picker"><span>${authUser ? escapeHTML(authUser.nickname) : "未登录"}</span></div></header><div class="history-heading"><span class="eyebrow">TAROT ARCHIVE</span><h1>历史牌阵</h1><p>${authUser ? "正在读取云端记录…" : "0 条云端记录"}</p></div><div id="cloud-history-list">${authUser ? "" : `<div class="history-empty"><span>◇</span><strong>还没有历史牌阵</strong><p>登录后，完成的解读会自动保存在这里。</p><button class="history-login-button" type="button">登录 Arcana</button></div>`}</div></main>`;
   overlay.querySelector(".auth-close").addEventListener("click", closeOverlay);
   if (!authUser) {
     overlay.querySelector(".history-login-button").addEventListener("click", () => authPage("login"));
@@ -210,8 +323,7 @@ async function openHistory() {
   }
   try {
     const payload = await requestJSON("/api/readings");
-    overlay.querySelector(".history-heading p").textContent = `${payload.readings.length} 条云端记录`;
-    overlay.querySelector("#cloud-history-list").innerHTML = historyContent(payload.readings);
+    renderCloudHistory(overlay, payload.readings);
   } catch (error) {
     if (error.status === 401) {
       authUser = null;

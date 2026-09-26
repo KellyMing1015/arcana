@@ -1284,10 +1284,12 @@ a:focus-visible,
 .cloud-history-page .auth-close { position: static; }
 .cloud-history-page .history-heading { margin-top: 38px; }
 .cloud-history-page .history-heading h1 { color: #6d5a78; }
-.cloud-history-entry .history-bubble { user-select: text; -webkit-user-select: text; }
+.cloud-history-user-picker { justify-content: flex-end; }
+.cloud-history-user-picker > span { color: var(--muted); font-size: 10px; letter-spacing: .08em; }
+.cloud-history-user-picker select { min-width: 140px; }
 .cloud-reading-details { margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(178, 148, 163, .23); }
 .cloud-reading-details summary { color: #8a718e; cursor: pointer; font-size: 10px; }
-.cloud-reading-details p { margin: 13px 0 0; color: #645969; font-size: 13px; line-height: 1.85; white-space: pre-wrap; }
+.cloud-reading-details p { margin: 13px 0 0; color: #645969; font-size: 13px; line-height: 1.85; white-space: pre-wrap; user-select: text; -webkit-user-select: text; }
 .history-login-button { min-height: 42px; margin-top: 14px; padding: 0 20px; border: 1px solid rgba(183, 143, 82, .5); border-radius: 999px; background: rgba(255, 251, 242, .82); color: #806b88; font-size: 11px; }
 
 @media (max-width: 680px) {
@@ -1691,7 +1693,7 @@ a:focus-visible,
 .history-card-thumbnails { display: flex; flex-wrap: wrap; gap: 7px; }
 .history-card-thumb { width: 42px; margin: 0; }
 .history-card-thumb img { display: block; width: 42px; height: 62px; border-radius: 5px; object-fit: cover; box-shadow: 0 5px 12px rgba(64, 51, 77, .15); }
-.history-card-thumb figcaption { display: none; }
+.history-card-thumb figcaption { margin-top: 5px; overflow: hidden; color: #8f7f8c; font-size: 9px; line-height: 1.35; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 .history-card-thumbnails-10 { width: min(100%, 238px); display: grid; grid-template-columns: repeat(5, 42px); gap: 7px; }
 .history-empty { min-height: 260px; border: 1px dashed rgba(177, 147, 164, .42); border-radius: 28px; display: grid; place-content: center; justify-items: center; gap: 8px; color: var(--muted); text-align: center; }
 .history-empty > span { color: var(--pink); font-size: 30px; }
