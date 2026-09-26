@@ -159,20 +159,19 @@ button:focus-visible, textarea:focus-visible, a:focus-visible, [tabindex]:focus-
 .fan-area.fan-dismissing .fan-card { opacity: 0 !important; transform: translate(-50%,-50%) scale(.86) !important; transition: transform .4s,opacity .4s !important; }
 .fan-area.fan-dismissing .fan-gap-info { opacity: 0; }
 
-/* 一张牌先抬起，内部翻面，再沿弧线飞向对应位置。 */
+/* 确认后立即抬起并沿弧线飞行，翻面与位移同时进行。 */
 .flight-card { position: fixed; z-index: 1000; aspect-ratio: 180/270; border-radius: 5px; transform: rotate(var(--start-rot)); transform-style: preserve-3d; pointer-events: none; will-change: transform; }
-.flight-card.is-lifting { animation: flight-lift .21s ease-out both; }
-@keyframes flight-lift { from { transform: rotate(var(--start-rot)); } to { transform: translateY(-33px) rotate(0deg) scale(1.08); } }
-.flight-inner { position: absolute; inset: 0; transform-style: preserve-3d; transition: transform .6s cubic-bezier(.3,.15,.65,.95); }
+.flight-inner { position: absolute; inset: 0; transform-style: preserve-3d; transition: transform .48s cubic-bezier(.3,.15,.65,.95); }
 .flight-card.is-flipped .flight-inner { transform: rotateY(180deg); }
 .flight-back, .flight-face { position: absolute; inset: 0; overflow: hidden; border-radius: 5px; backface-visibility: hidden; -webkit-backface-visibility: hidden; box-shadow: 0 14px 26px #11121638; }
 .flight-back { background: #101114; color: #abc6af; }
 .flight-face { transform: rotateY(180deg); }
 .flight-face img { width: 100%; height: 100%; object-fit: contain; background: #f4f3f0; }
-.flight-card.is-flying { animation: flight-arc .68s cubic-bezier(.28,.72,.24,1) both; }
+.flight-card.is-flying { animation: flight-arc .72s cubic-bezier(.28,.72,.24,1) both; }
 @keyframes flight-arc {
-  0% { transform: translateY(-33px) rotate(0deg) scale(1.08); }
-  52% { transform: translate(var(--mid-x),var(--mid-y)) rotate(-5deg) scale(.88); }
+  0% { transform: rotate(var(--start-rot)); }
+  18% { transform: translateY(-33px) rotate(0deg) scale(1.08); }
+  58% { transform: translate(var(--mid-x),var(--mid-y)) rotate(-5deg) scale(.88); }
   100% { transform: translate(var(--end-x),var(--end-y)) rotate(0deg) scale(var(--target-scale)); }
 }
 
@@ -599,21 +598,27 @@ button:focus-visible, textarea:focus-visible, a:focus-visible, [tabindex]:focus-
 .initial-provider-card > strong { display: block; margin-top: 9px; color: var(--violet-deep); font-family: var(--serif); font-size: 20px; font-weight: 500; }
 .initial-provider-card > p { margin: 13px 0 0; color: #7f727d; font-size: 11px; line-height: 1.8; }
 
-/* 对话页沿用网站导航，只留下返回入口；轮次固定在底部操作区左侧。 */
+/* 对话页沿用网站导航；返回入口单独占一行，消息滚动时不会从按钮下穿过。 */
 .conversation-screen {
   position: relative;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: 52px minmax(0, 1fr) auto;
 }
-.conversation-back-floating {
-  position: absolute;
-  z-index: 5;
-  top: 16px;
-  left: clamp(14px, 2.8vw, 32px);
+.conversation-toolbar {
+  position: relative;
+  z-index: 2;
+  padding: 0 clamp(14px, 2.8vw, 32px);
+  border-bottom: 1px solid rgba(194, 165, 177, .34);
+  background: rgba(255, 250, 243, .58);
+  display: flex;
+  align-items: center;
+  backdrop-filter: blur(18px) saturate(125%);
+  -webkit-backdrop-filter: blur(18px) saturate(125%);
+}
+.conversation-toolbar .conversation-back {
   padding: 8px 3px;
   color: #74677c;
   font-size: 11px;
 }
-.conversation-messages { padding-top: 62px; }
 .conversation-round-count {
   flex: none;
   color: #8d7f8a;
@@ -623,9 +628,8 @@ button:focus-visible, textarea:focus-visible, a:focus-visible, [tabindex]:focus-
 .conversation-compose-actions .follow-up-status { min-width: 0; }
 
 @media (max-width: 560px) {
-  .conversation-screen { grid-template-rows: minmax(0, 1fr) auto; }
-  .conversation-back-floating { top: 11px; left: 13px; }
-  .conversation-messages { padding-top: 53px; }
+  .conversation-screen { grid-template-rows: 48px minmax(0, 1fr) auto; }
+  .conversation-toolbar { padding: 0 13px; }
   .conversation-round-count { font-size: 8px; }
 }
 
@@ -687,6 +691,8 @@ a:focus-visible,
 .site-footer { position: relative; z-index: 2; }
 
 .site-header {
+  z-index: 20;
+  overflow: visible;
   width: min(calc(100% - 32px), 1480px);
   height: 64px;
   margin: 16px auto 0;
@@ -930,8 +936,16 @@ a:focus-visible,
 .spark-two { bottom: 16px; left: 0; width: 44px; height: 44px; color: var(--gold); }
 
 /* 新卡背贯穿全部抽牌动画。 */
-.back-ornament { display: block; width: 100%; height: 100%; overflow: hidden; border-radius: inherit; }
-.back-ornament img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.back-ornament {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: inherit;
+  background: #625d83 url("/assets/ui/card-back-cream-magic-v3-mobile.jpg?v=6") center / cover no-repeat;
+}
+.card-art-retrying { background: linear-gradient(145deg, #f8f1e8, #eee4eb); }
+.card-art-load-error { color: transparent; background: linear-gradient(145deg, #f8f1e8, #e8dce7); }
 .question-card-preview { background: #625d83; }
 .shuffle-card,
 .cut-half,
@@ -1278,7 +1292,7 @@ a:focus-visible,
 }
 .account-button:hover:not(:disabled) { border-color: rgba(169, 124, 61, .7); background: rgba(255, 252, 245, .95); }
 .account-button strong { max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.account-menu { position: absolute; z-index: 50; top: calc(100% + 8px); right: 0; width: 132px; padding: 6px; border: 1px solid rgba(183, 145, 91, .35); border-radius: 14px; background: rgba(255, 251, 243, .95); box-shadow: 0 16px 36px rgba(72, 54, 82, .15); backdrop-filter: blur(18px); }
+.account-menu { position: absolute; z-index: 50; top: calc(100% + 8px); right: 0; width: 132px; padding: 6px; border: 1px solid rgba(187, 157, 170, .44); border-radius: 14px; background: #fffaf2; box-shadow: 0 16px 36px rgba(93, 75, 102, .15), inset 0 1px 0 rgba(255,255,255,.8); }
 .account-menu[hidden] { display: none; }
 .account-menu button { width: 100%; min-height: 38px; padding: 0 12px; border: 0; border-radius: 9px; background: transparent; color: #67596d; text-align: left; font-size: 11px; }
 .account-menu button:hover { background: rgba(221, 202, 171, .24); }

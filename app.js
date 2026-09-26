@@ -45,7 +45,9 @@ let fanOffset = 0;
 let fanMotionFrame = null;
 let activeReadingRequest = null;
 let activeConversationRequest = null;
-const cardImagePromises = new Map();
+const cardImageCache = new Map();
+const cardsById = new Map(DECK.map((card) => [card.id, card]));
+const CARD_IMAGE_RETRY_LIMIT = 2;
 
 function later(callback, milliseconds) {
   const id = setTimeout(() => { timers.delete(id); callback(); }, milliseconds);
@@ -132,35 +134,105 @@ function positionLabels() {
 function go(stage) {
   clearTimers();
   state.stage = stage;
+  if (stage === "question") cardImageCache.clear();
   document.body.classList.toggle("result-open", stage === "result");
   document.body.classList.toggle("conversation-open", stage === "conversation");
   render();
 }
 
 function backArt() {
-  return `<span class="back-ornament" aria-hidden="true"><img src="/assets/ui/card-back-cream-magic-v3.png?v=5" width="1024" height="1536" alt="" decoding="async"></span>`;
+  // 卡背由同一个 CSS 图片资源绘制，避免洗牌时同时创建、解码 14 个大图标签。
+  return `<span class="back-ornament" aria-hidden="true"></span>`;
 }
 
-function preloadCardImage(card) {
-  if (cardImagePromises.has(card.id)) return cardImagePromises.get(card.id);
-  const promise = new Promise((resolve) => {
+function loadCardImageAttempt(card, attempt) {
+  return new Promise((resolve) => {
     const image = new Image();
+    image.decoding = "async";
+    image.loading = "eager";
+    image.fetchPriority = "high";
     let settled = false;
     const finish = (loaded) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      if (!loaded) cardImagePromises.delete(card.id);
-      resolve(loaded);
+      image.onload = null;
+      image.onerror = null;
+      resolve(loaded ? image : null);
     };
-    const timeout = setTimeout(() => finish(false), 6000);
-    image.onload = () => (image.decode ? image.decode().catch(() => {}) : Promise.resolve()).finally(() => finish(true));
+    const timeout = setTimeout(() => finish(false), 4000);
+    image.onload = async () => {
+      if (image.decode) {
+        try { await image.decode(); } catch (_error) { /* Safari 偶尔会拒绝重复 decode，naturalWidth 仍可确认图片完整。 */ }
+      }
+      finish(image.complete && image.naturalWidth > 0);
+    };
     image.onerror = () => finish(false);
-    image.src = cardImageURL(card);
+    image.src = cardImageURL(card, attempt);
   });
-  cardImagePromises.set(card.id, promise);
-  return promise;
 }
+
+function trimCardImageCache() {
+  // 只保留所有已选牌和最近两张候选；未选牌较少时至少保留 4 张，避免滑动时反复解码。
+  const limit = Math.max(4, state.selected.length + 2);
+  while (cardImageCache.size > limit) {
+    const removableId = [...cardImageCache.keys()].find((id) => !state.selected.some((card) => card.id === id));
+    if (!removableId) return;
+    cardImageCache.delete(removableId);
+  }
+}
+
+function preloadCardImage(card) {
+  const cached = cardImageCache.get(card.id);
+  if (cached) {
+    // 重新插入以维持最近使用顺序，让频繁滑牌时的图片缓存保持有界。
+    cardImageCache.delete(card.id);
+    cardImageCache.set(card.id, cached);
+    return cached.promise;
+  }
+  const entry = { image: null, promise: null };
+  entry.promise = (async () => {
+    for (let attempt = 0; attempt <= CARD_IMAGE_RETRY_LIMIT; attempt += 1) {
+      const image = await loadCardImageAttempt(card, attempt);
+      if (image) {
+        // 保留已解码的 Image 对象，避免页面切换后马上被回收并重新解码。
+        entry.image = image;
+        return true;
+      }
+    }
+    if (cardImageCache.get(card.id) === entry) cardImageCache.delete(card.id);
+    return false;
+  })();
+  cardImageCache.set(card.id, entry);
+  trimCardImageCache();
+  return entry.promise;
+}
+
+function handleCardImageError(event) {
+  const image = event.target;
+  if (!(image instanceof HTMLImageElement) || !image.dataset.cardImage) return;
+  const card = cardsById.get(image.dataset.cardImage);
+  const attempt = Number(image.dataset.imageRetry || 0);
+  if (!card || attempt >= CARD_IMAGE_RETRY_LIMIT) {
+    image.classList.add("card-art-load-error");
+    return;
+  }
+  const nextAttempt = attempt + 1;
+  image.dataset.imageRetry = String(nextAttempt);
+  image.classList.add("card-art-retrying");
+  window.setTimeout(() => {
+    if (image.isConnected) image.src = cardImageURL(card, nextAttempt);
+  }, 120 * nextAttempt);
+}
+
+function handleCardImageLoad(event) {
+  const image = event.target;
+  if (!(image instanceof HTMLImageElement) || !image.dataset.cardImage) return;
+  image.classList.remove("card-art-retrying", "card-art-load-error");
+}
+
+document.addEventListener("error", handleCardImageError, true);
+document.addEventListener("load", handleCardImageLoad, true);
 
 function renderQuestion() {
   app.innerHTML = `<section class="ritual-screen question-screen screen-enter">
@@ -478,7 +550,11 @@ function renderFan() {
     event.preventDefault();
     stopMotion();
     const now = performance.now();
-    const pressedCard = cardAtPoint(event.clientX, event.clientY, true);
+    // 浮起的牌位于最高层，优先采用浏览器实际命中的整张牌；这样牌面边缘、图片和装饰都能确认选择。
+    const targetedCardId = event.target.closest?.(".fan-card.is-hovered")?.dataset.cardId;
+    const pressedCard = targetedCardId
+      ? getRemaining().find((card) => card.id === targetedCardId)
+      : cardAtPoint(event.clientX, event.clientY, true);
     gesture = {
       id: event.pointerId,
       pointerType: event.pointerType,
@@ -671,14 +747,13 @@ function setHover(id) {
 async function selectCard(card) {
   if (!card || state.isSelecting || state.stage !== "fan") return;
   state.isSelecting = true;
-  await preloadCardImage(card);
-  if (state.stage !== "fan") return;
+  // 第一次点击浮起牌时已开始预载正面；确认选择不能继续等待网络或图片解码。
+  preloadCardImage(card);
   const index = state.selected.length;
   const element = document.querySelector(`[data-card-id="${card.id}"]`);
   const tray = document.querySelector("#selection-tray");
   const slot = document.querySelector(`#selection-slot-${index}`);
   tray.scrollLeft = slot.offsetLeft - tray.clientWidth / 2 + slot.clientWidth / 2;
-  await pause(100);
   const source = element.getBoundingClientRect();
   const target = slot.getBoundingClientRect();
   const width = element.offsetWidth;
@@ -694,12 +769,10 @@ async function selectCard(card) {
   flight.innerHTML = `<div class="flight-inner"><div class="flight-back">${backArt()}</div><div class="flight-face">${cardFace(card)}</div></div>`;
   document.body.append(flight);
   element.style.opacity = "0";
-  flight.classList.add("is-lifting");
-  await pause(210);
-  flight.classList.add("is-flipped");
-  await pause(600);
-  flight.classList.add("is-flying");
-  await pause(680);
+  // 强制记录初始位置后，下一次绘制立刻同时开始翻面与飞行。
+  flight.getBoundingClientRect();
+  flight.classList.add("is-flipped", "is-flying");
+  await pause(720);
   flight.remove();
   state.selected.push(card);
   element.remove();
@@ -714,7 +787,15 @@ async function selectCard(card) {
     if (fanMotionFrame) cancelAnimationFrame(fanMotionFrame);
     fanMotionFrame = null;
     area.classList.add("fan-dismissing");
-    await pause(450);
+    // 动画继续即时执行，同时给最后一张牌最多 1.4 秒完成加载；其余牌通常已在第一次浮起时完成预载。
+    await Promise.all([
+      pause(450),
+      Promise.race([
+        Promise.all(state.selected.map(preloadCardImage)),
+        pause(1400),
+      ]),
+    ]);
+    if (state.stage !== "fan") return;
     window.removeEventListener("resize", onFanResize);
     go("result");
   } else {
@@ -1155,10 +1236,12 @@ function renderConversation() {
   const remaining = Math.max(0, 8 - state.followUpCount);
   const intro = [
     { role: "user", text: state.question },
-    { role: "assistant", text: "这次牌面我已经读完了。你可以继续问我，牌面和完整解读收在右上角。" },
+    { role: "assistant", text: "这次牌面我已经读完了。你可以继续问我，也可以从顶部的“回到解读”查看牌面和完整解读。" },
   ];
   app.innerHTML = `<section class="conversation-screen screen-enter">
-    <button class="conversation-back conversation-back-floating" id="back-to-reading" type="button">← 回到解读</button>
+    <header class="conversation-toolbar">
+      <button class="conversation-back" id="back-to-reading" type="button">← 回到解读</button>
+    </header>
     <div class="conversation-messages" id="conversation-messages" aria-live="polite">${[...intro, ...state.chatMessages].map(conversationBubble).join("")}</div>
     <form id="follow-up-form" class="conversation-compose ${state.conversationClosed ? "is-closed" : ""}">
       <div id="follow-up-image-preview" class="follow-up-image-preview" hidden></div>

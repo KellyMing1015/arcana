@@ -668,14 +668,20 @@ def home():
 def card_image(filename):
     if not filename.endswith(".webp") or not filename.removesuffix(".webp").replace("-", "").isalnum():
         return jsonify(error="牌面图片不存在。"), 404
-    return send_from_directory(ROOT / "assets" / "cards", filename)
+    response = send_from_directory(ROOT / "assets" / "cards", filename)
+    if request.args.get("v"):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return response
 
 
 @app.get("/assets/ui/<filename>")
 def ui_image(filename):
     if filename not in UI_FILES:
         return jsonify(error="界面图片不存在。"), 404
-    return send_from_directory(ROOT / "assets" / "ui", filename)
+    response = send_from_directory(ROOT / "assets" / "ui", filename)
+    if request.args.get("v"):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return response
 
 
 @app.get("/<path:filename>")

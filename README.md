@@ -45,7 +45,7 @@ ARCANA_COOKIE_SECURE=0
 
 - `index.html`、`styles.css`、`cards.js`、`app.js`：抽牌页面、78 张牌的资料和交互。
 - `assets/cards/`：从 Wikimedia Commons 下载的 78 张高清牌面，以及每张图的来源链接。牌面原画由 Pamela Colman Smith 绘制；该文件分类页将素材标为公有领域。网页使用 960 像素宽的 WebP 版本，以缩短加载时间。牌背仍使用原来的 Arcana 设计。
-- `assets/ui/card-back-cream-magic-v3.png`：抽牌流程统一使用的奶油魔法风卡背；中央双圆环完整闭合，下半张由上半张旋转 180°生成，正位与逆位外观完全一致。
+- `assets/ui/card-back-cream-magic-v3.png`：奶油魔法风卡背的高清源图；网页实际使用从该源图等比生成的 `card-back-cream-magic-v3-mobile.jpg`，降低手机端洗牌动画的下载和解码压力。
 - `assets/ui/rabbit-single-color.png`、`assets/ui/dove-single-color.png`：首页使用的单色兔子与鸽子装饰。
 - `scripts/fetch_card_art.py`：需要重新获取图片时运行；使用 `requirements.txt` 中的 Pillow。
 - `settings.js`：页面中的供应商和用户信息设置，数据保存在浏览器 localStorage。

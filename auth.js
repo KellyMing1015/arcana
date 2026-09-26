@@ -1,6 +1,5 @@
 import {
   disconnectAccountSettings,
-  flushAccountSettings,
   getUserProfiles,
   syncAccountSettings,
 } from "./settings.js";
@@ -205,7 +204,7 @@ function formatCloudTime(value) {
 }
 
 function cloudCards(record) {
-  return `<div class="history-card-thumbnails ${record.cards.length === 10 ? "history-card-thumbnails-10" : ""}">${record.cards.map((card) => `<figure class="history-card-thumb"><img src="/assets/cards/${escapeHTML(card.id)}.webp" alt="${escapeHTML(card.chinese || "塔罗牌")}" style="transform:rotate(${card.reversed ? 180 : 0}deg)"><figcaption>${escapeHTML(card.chinese || "塔罗牌")}</figcaption></figure>`).join("")}</div>`;
+  return `<div class="history-card-thumbnails ${record.cards.length === 10 ? "history-card-thumbnails-10" : ""}">${record.cards.map((card) => `<figure class="history-card-thumb"><img class="card-art" data-card-image="${escapeHTML(card.id)}" data-image-retry="0" src="/assets/cards/${escapeHTML(card.id)}.webp?v=2" alt="${escapeHTML(card.chinese || "塔罗牌")}" loading="lazy" decoding="async" style="transform:rotate(${card.reversed ? 180 : 0}deg)"><figcaption>${escapeHTML(card.chinese || "塔罗牌")}</figcaption></figure>`).join("")}</div>`;
 }
 
 function historyContent(records) {
@@ -353,7 +352,7 @@ function updateAccountHeader() {
   const host = document.querySelector("#account-area");
   if (!host) return;
   host.innerHTML = authUser
-    ? `<button id="account-button" class="account-button is-logged-in" type="button" aria-haspopup="menu" aria-expanded="false"><strong>${escapeHTML(authUser.nickname)}</strong></button><div class="account-menu" id="account-menu" role="menu" hidden><button type="button" data-account-action="history" role="menuitem">历史牌阵</button><button type="button" data-account-action="logout" role="menuitem">退出登录</button></div>`
+    ? `<button id="account-button" class="account-button is-logged-in" type="button" aria-haspopup="menu" aria-expanded="false"><strong>${escapeHTML(authUser.nickname)}</strong></button><div class="account-menu" id="account-menu" role="menu" hidden><button type="button" data-account-action="logout" role="menuitem">退出登录</button></div>`
     : `<button id="account-button" class="account-button" type="button"><strong>未登录</strong></button>`;
   const button = host.querySelector("#account-button");
   if (!authUser) {
@@ -365,9 +364,10 @@ function updateAccountHeader() {
     menu.hidden = !menu.hidden;
     button.setAttribute("aria-expanded", String(!menu.hidden));
   });
-  menu.querySelector('[data-account-action="history"]').addEventListener("click", openHistory);
-  menu.querySelector('[data-account-action="logout"]').addEventListener("click", async () => {
-    await flushAccountSettings();
+  menu.querySelector('[data-account-action="logout"]').addEventListener("click", async (event) => {
+    const logoutButton = event.currentTarget;
+    logoutButton.disabled = true;
+    logoutButton.textContent = "正在退出…";
     await requestJSON("/api/logout", { method: "POST" }).catch(() => {});
     authUser = null;
     disconnectAccountSettings();

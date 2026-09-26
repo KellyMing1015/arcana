@@ -1,6 +1,5 @@
 const PROVIDER_STORAGE_KEY = "arcana.providers.v1";
 const INITIAL_PROVIDER_ID = "__arcana_initial_provider__";
-const INITIAL_PROVIDER_MODEL = "【CCMAX】claude-opus-5-5";
 const PROFILE_STORAGE_KEY = "arcana.user-profiles.v2";
 const LEGACY_PROFILE_STORAGE_KEY = "arcana.user-info.v1";
 const HISTORY_STORAGE_PREFIX = "arcana_history_";
@@ -176,10 +175,6 @@ export async function syncAccountSettings(userId, nickname = "") {
   cloudAccountId = accountId;
 }
 
-export async function flushAccountSettings() {
-  await cloudSaveChain;
-}
-
 export function disconnectAccountSettings() {
   cloudAccountId = null;
   if (!localStorage.getItem(ACCOUNT_CACHE_USER_KEY)) return;
@@ -235,12 +230,12 @@ export function getActiveProvider() {
 
 export function getActiveProviderLabel() {
   const item = settings.providers.find((provider) => provider.id === settings.activeId);
-  return item ? `${item.name} · ${item.model}` : `初始供应商 · ${INITIAL_PROVIDER_MODEL}`;
+  return item ? `${item.name} · ${item.model}` : "初始供应商";
 }
 
 export function getProviderChoices() {
   return [
-    { id: "", label: `初始供应商 · ${INITIAL_PROVIDER_MODEL}`, active: !settings.activeId },
+    { id: "", label: "初始供应商", active: !settings.activeId },
     ...settings.providers.map((item) => ({ id: item.id, label: `${item.name} · ${item.model}`, active: item.id === settings.activeId })),
   ];
 }
@@ -343,7 +338,6 @@ export function saveHistoryRecord(userId, record) {
 function providerList() {
   const initial = `<button class="provider-list-item ${selectedId === INITIAL_PROVIDER_ID ? "is-selected" : ""}" type="button" data-provider-id="${INITIAL_PROVIDER_ID}">
     <span class="provider-list-head"><strong>初始供应商</strong>${!settings.activeId ? "<small>使用中</small>" : ""}</span>
-    <span class="provider-list-model">${INITIAL_PROVIDER_MODEL}</span>
   </button>`;
   return initial + settings.providers.map((item) => `<button class="provider-list-item ${selectedId === item.id ? "is-selected" : ""}" type="button" data-provider-id="${escapeHTML(item.id)}">
     <span class="provider-list-head"><strong>${escapeHTML(item.name)}</strong>${settings.activeId === item.id ? "<small>使用中</small>" : ""}</span>
@@ -357,10 +351,7 @@ function providerEditor() {
       <div><span class="eyebrow">BUILT-IN PROVIDER</span><h2>初始供应商</h2></div>
       ${!settings.activeId ? "<span class=\"settings-active-badge\">正在使用</span>" : ""}
     </div>
-    <div class="initial-provider-card">
-      <span>内置模型</span><strong>${INITIAL_PROVIDER_MODEL}</strong>
-      <p>由 Arcana 服务端统一提供，新用户不需要填写地址或 API Key。初始供应商不能编辑或删除。</p>
-    </div>
+    <p class="settings-editor-intro">由 Arcana 服务端统一提供，新用户不需要填写地址或 API Key。初始供应商不能编辑或删除。</p>
     ${settings.activeId ? "<button class=\"settings-save\" id=\"activate-initial-provider\" type=\"button\">设为当前供应商</button>" : ""}
     <p id="settings-feedback" class="settings-feedback" role="status" aria-live="polite"></p>`;
   }
@@ -461,7 +452,7 @@ function settingsHome() {
 }
 
 function historyThumbnails(record) {
-  return `<div class="history-card-thumbnails ${record.spread === 10 ? "history-card-thumbnails-10" : ""}" aria-label="本次抽到的牌">${record.cards.map((card) => `<figure class="history-card-thumb"><img src="/assets/cards/${card.id}.webp" alt="${escapeHTML(card.chinese)}${card.reversed ? "逆位" : "正位"}" style="transform:rotate(${card.reversed ? 180 : 0}deg)"><figcaption>${escapeHTML(card.chinese)}</figcaption></figure>`).join("")}</div>`;
+  return `<div class="history-card-thumbnails ${record.spread === 10 ? "history-card-thumbnails-10" : ""}" aria-label="本次抽到的牌">${record.cards.map((card) => `<figure class="history-card-thumb"><img class="card-art" data-card-image="${escapeHTML(card.id)}" data-image-retry="0" src="/assets/cards/${escapeHTML(card.id)}.webp?v=2" alt="${escapeHTML(card.chinese)}${card.reversed ? "逆位" : "正位"}" loading="lazy" decoding="async" style="transform:rotate(${card.reversed ? 180 : 0}deg)"><figcaption>${escapeHTML(card.chinese)}</figcaption></figure>`).join("")}</div>`;
 }
 
 function historyTimeline(records) {
