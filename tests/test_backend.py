@@ -4,6 +4,8 @@ import io
 import json
 import os
 import socket
+import sqlite3
+import tempfile
 import unittest
 from datetime import datetime
 from unittest.mock import patch
@@ -16,6 +18,13 @@ import llm
 class ReadingTests(unittest.TestCase):
     def setUp(self):
         website.CONVERSATIONS.clear()
+        self.database_directory = tempfile.TemporaryDirectory()
+        website.app.config.update(
+            TESTING=True,
+            DATABASE=os.path.join(self.database_directory.name, "arcana-test.db"),
+            SESSION_COOKIE_SECURE=False,
+        )
+        website.initialize_database()
         self.client = website.app.test_client()
         self.payload = {
             "question": "我该如何看待这段关系？",
@@ -26,6 +35,9 @@ class ReadingTests(unittest.TestCase):
                 {"id": "star", "name": "星星（THE STAR）", "reversed": False},
             ],
         }
+
+    def tearDown(self):
+        self.database_directory.cleanup()
 
     def test_stream_uses_only_the_sent_cards_and_positions(self):
         sent_messages = []
@@ -143,7 +155,9 @@ class ReadingTests(unittest.TestCase):
             return io.BytesIO(b'data: {"choices":[{"delta":{"content":"ARCANA_FRAMEWORK:cause\\nanswer"}}]}\n\ndata: [DONE]\n\n')
 
         with patch.object(website, "open_chat_stream", side_effect=fake_upstream):
+            self.client.post("/api/register", json={"email": "reader@example.com", "nickname": "小欧", "password": "password123"})
             self.client.post("/api/reading", json={**self.payload, "recordHistory": True, "userInfo": {"enabled": True, "id": "user-1", "nickname": "小欧"}}, buffered=True)
+            self.client.post("/api/logout")
             self.client.post("/api/reading", json={**self.payload, "recordHistory": False}, buffered=True)
             self.client.post("/api/reading", json={**self.payload, "recordHistory": True, "userInfo": {"enabled": False}}, buffered=True)
         self.assertIn("【总结】", captured[0])
@@ -278,8 +292,78 @@ class ReadingTests(unittest.TestCase):
             self.assertEqual(script.status_code, 200)
         with self.client.get("/settings.js") as script:
             self.assertEqual(script.status_code, 200)
+        with self.client.get("/auth.js") as script:
+            self.assertEqual(script.status_code, 200)
         self.assertEqual(self.client.get("/.env.example").status_code, 404)
         self.assertEqual(self.client.get("/prompts/system.md").status_code, 404)
+
+
+class AccountTests(unittest.TestCase):
+    def setUp(self):
+        self.database_directory = tempfile.TemporaryDirectory()
+        website.app.config.update(
+            TESTING=True,
+            DATABASE=os.path.join(self.database_directory.name, "arcana-test.db"),
+            SESSION_COOKIE_SECURE=False,
+        )
+        website.initialize_database()
+        self.client = website.app.test_client()
+
+    def tearDown(self):
+        self.database_directory.cleanup()
+
+    def register(self, email="reader@example.com", nickname="小欧"):
+        return self.client.post("/api/register", json={
+            "email": email,
+            "nickname": nickname,
+            "password": "correct-password",
+        })
+
+    def test_register_hashes_password_and_session_can_logout_and_login(self):
+        registered = self.register(email="Reader@Example.com")
+        self.assertEqual(registered.status_code, 201)
+        self.assertEqual(registered.json["user"]["email"], "reader@example.com")
+        with sqlite3.connect(website.app.config["DATABASE"]) as connection:
+            password_hash = connection.execute("SELECT password_hash FROM users").fetchone()[0]
+        self.assertNotEqual(password_hash, "correct-password")
+        self.assertTrue(password_hash.startswith("$2"))
+        self.assertEqual(self.client.get("/api/me").status_code, 200)
+        self.assertEqual(self.client.post("/api/logout").status_code, 200)
+        self.assertEqual(self.client.get("/api/me").status_code, 401)
+        wrong = self.client.post("/api/login", json={"email": "reader@example.com", "password": "wrong-password"})
+        self.assertEqual(wrong.status_code, 401)
+        logged_in = self.client.post("/api/login", json={"email": "reader@example.com", "password": "correct-password"})
+        self.assertEqual(logged_in.status_code, 200)
+
+    def test_duplicate_email_and_weak_password_are_rejected(self):
+        self.assertEqual(self.register().status_code, 201)
+        self.assertEqual(self.register(nickname="另一个人").status_code, 409)
+        weak = self.client.post("/api/register", json={"email": "new@example.com", "nickname": "新用户", "password": "short"})
+        self.assertEqual(weak.status_code, 400)
+
+    def test_readings_are_private_and_migration_preserves_records(self):
+        self.assertEqual(self.client.get("/api/readings").status_code, 401)
+        self.register()
+        record = {
+            "question": "我该怎么做？",
+            "spread_type": "单牌",
+            "cards": [{"id": "fool", "chinese": "愚者", "position": "此刻", "reversed": False}],
+            "summary": "先停止拖延，今天完成第一步。",
+            "full_reading": "完整解读内容。",
+        }
+        saved = self.client.post("/api/readings", json=record)
+        self.assertEqual(saved.status_code, 201)
+        migrated = self.client.post("/api/readings/migrate", json={"readings": [{
+            **record,
+            "question": "旧问题",
+            "createdAt": 1750000000000,
+        }]})
+        self.assertEqual(migrated.status_code, 200)
+        readings = self.client.get("/api/readings").json["readings"]
+        self.assertEqual({item["question"] for item in readings}, {"我该怎么做？", "旧问题"})
+        self.client.post("/api/logout")
+        self.register(email="other@example.com", nickname="另一位")
+        self.assertEqual(self.client.get("/api/readings").json["readings"], [])
 
 
 class RelayTests(unittest.TestCase):

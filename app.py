@@ -3,22 +3,28 @@
 import base64
 import binascii
 import json
+import os
 import re
+import secrets
+import sqlite3
 import time
 import uuid
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
 from threading import Lock
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
-from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
+from flask import Flask, Response, jsonify, request, send_from_directory, session as flask_session, stream_with_context
+from flask_bcrypt import Bcrypt
 
 from llm import LLMError, friendly_error, iter_chat_text, list_models, open_chat_stream
 
 
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env")
+DATABASE_PATH = ROOT / "arcana.db"
 SYSTEM_PROMPT = (ROOT / "prompts" / "system.md").read_text(encoding="utf-8").strip()
 POSITIONS = {
     1: ["此刻"],
@@ -43,7 +49,7 @@ MAX_IMAGE_BYTES = 1536 * 1024
 MAX_IMAGE_TOTAL_BYTES = 4 * 1024 * 1024
 CONVERSATIONS = {}
 CONVERSATION_LOCK = Lock()
-PUBLIC_FILES = {"index.html", "app.js", "cards.js", "settings.js", "styles.css"}
+PUBLIC_FILES = {"index.html", "app.js", "auth.js", "cards.js", "settings.js", "styles.css"}
 UI_FILES = {
     "card-back-cream-magic.png",
     "card-back-cream-magic-v2.png",
@@ -53,9 +59,56 @@ UI_FILES = {
     "dove-single-color.png",
 }
 DEV_ORIGINS = {"http://127.0.0.1:4173", "http://localhost:4173"}
+EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+SPREAD_TYPES = {"单牌", "三牌阵", "凯尔特十字"}
 
 app = Flask(__name__, static_folder=None)
 app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
+app.config["DATABASE"] = str(DATABASE_PATH)
+app.config["SECRET_KEY"] = os.getenv("ARCANA_SECRET_KEY") or secrets.token_hex(32)
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = os.getenv("ARCANA_COOKIE_SECURE", "0").strip().lower() in {"1", "true", "yes", "on"}
+app.config["PERMANENT_SESSION_LIFETIME"] = 30 * 24 * 60 * 60
+bcrypt = Bcrypt(app)
+
+
+def database_connection():
+    connection = sqlite3.connect(app.config["DATABASE"])
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    return connection
+
+
+def initialize_database():
+    with database_connection() as connection:
+        connection.executescript("""
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT UNIQUE NOT NULL,
+                nickname TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS readings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                question TEXT,
+                spread_type TEXT,
+                cards TEXT,
+                summary TEXT,
+                full_reading TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_readings_user_created
+            ON readings(user_id, created_at DESC, id DESC);
+        """)
+
+
+initialize_database()
 
 SUMMARY_INSTRUCTION = (
     "在完成完整解读后，另起一行输出【总结】标记，后跟一段100字以内的总结。"
@@ -83,10 +136,269 @@ def add_cors_headers(response):
     origin = request.headers.get("Origin")
     if origin and allowed_origin():
         response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
         response.headers["Vary"] = "Origin"
     return response
+
+
+def api_origin_allowed():
+    if allowed_origin():
+        return None
+    return jsonify(error="此页面来源不允许访问账号接口。"), 403
+
+
+def current_user():
+    user_id = flask_session.get("user_id")
+    if type(user_id) is not int:
+        return None
+    with database_connection() as connection:
+        return connection.execute(
+            "SELECT id, email, nickname, created_at FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+
+
+def login_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        denied = api_origin_allowed()
+        if denied:
+            return denied
+        if request.method == "OPTIONS":
+            return Response(status=204)
+        user = current_user()
+        if user is None:
+            flask_session.clear()
+            return jsonify(error="请先登录后再使用这项功能。"), 401
+        return view(user, *args, **kwargs)
+    return wrapped
+
+
+def user_json(user):
+    return {
+        "id": user["id"],
+        "email": user["email"],
+        "nickname": user["nickname"],
+        "created_at": user["created_at"],
+    }
+
+
+def normalize_email(value):
+    if not isinstance(value, str):
+        return ""
+    return value.strip().lower()
+
+
+def normalize_reading_payload(payload, migration=False):
+    if not isinstance(payload, dict):
+        raise ValueError("历史记录格式不正确。")
+    question = payload.get("question", "")
+    spread_type = payload.get("spread_type", payload.get("spreadLabel", ""))
+    cards = payload.get("cards")
+    summary = payload.get("summary", "")
+    full_reading = payload.get("full_reading", payload.get("fullReading", ""))
+    if not isinstance(question, str) or len(question.strip()) > 2000:
+        raise ValueError("问题内容无效。")
+    if spread_type not in SPREAD_TYPES:
+        legacy_spread = payload.get("spread")
+        spread_type = {1: "单牌", 3: "三牌阵", 10: "凯尔特十字"}.get(legacy_spread, "")
+    if spread_type not in SPREAD_TYPES:
+        raise ValueError("牌阵类型无效。")
+    if isinstance(cards, str):
+        try:
+            cards = json.loads(cards)
+        except json.JSONDecodeError as error:
+            raise ValueError("牌面数据格式不正确。") from error
+    if not isinstance(cards, list) or not cards or len(cards) > 10:
+        raise ValueError("牌面数据格式不正确。")
+    safe_cards = []
+    for card in cards:
+        if not isinstance(card, dict):
+            raise ValueError("牌面数据格式不正确。")
+        card_id = card.get("id")
+        if not isinstance(card_id, str) or not re.fullmatch(r"[a-z0-9-]{1,40}", card_id):
+            raise ValueError("牌面数据格式不正确。")
+        safe_cards.append({
+            "id": card_id,
+            "chinese": str(card.get("chinese", card.get("name", "塔罗牌")))[:40],
+            "position": str(card.get("position", ""))[:40],
+            "reversed": card.get("reversed") is True,
+        })
+    if not isinstance(summary, str) or len(summary.strip()) > 2000:
+        raise ValueError("总结内容无效。")
+    if not isinstance(full_reading, str) or len(full_reading.strip()) > 100000:
+        raise ValueError("完整解读内容无效。")
+    created_at = None
+    if migration:
+        legacy_created = payload.get("createdAt")
+        if isinstance(legacy_created, (int, float)) and legacy_created > 0:
+            created_at = datetime.fromtimestamp(legacy_created / 1000).strftime("%Y-%m-%d %H:%M:%S")
+        elif isinstance(payload.get("created_at"), str):
+            try:
+                created_at = datetime.fromisoformat(payload["created_at"].replace("Z", "+00:00")).strftime("%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                created_at = None
+    return {
+        "created_at": created_at,
+        "question": question.strip(),
+        "spread_type": spread_type,
+        "cards": json.dumps(safe_cards, ensure_ascii=False),
+        "summary": summary.strip(),
+        "full_reading": full_reading.strip(),
+    }
+
+
+def insert_reading(connection, user_id, record):
+    columns = "user_id, question, spread_type, cards, summary, full_reading"
+    values = [user_id, record["question"], record["spread_type"], record["cards"], record["summary"], record["full_reading"]]
+    if record.get("created_at"):
+        columns += ", created_at"
+        values.append(record["created_at"])
+    placeholders = ", ".join("?" for _ in values)
+    cursor = connection.execute(f"INSERT INTO readings ({columns}) VALUES ({placeholders})", values)
+    return cursor.lastrowid
+
+
+def reading_json(row):
+    try:
+        cards = json.loads(row["cards"] or "[]")
+    except json.JSONDecodeError:
+        cards = []
+    return {
+        "id": row["id"],
+        "created_at": row["created_at"],
+        "question": row["question"] or "",
+        "spread_type": row["spread_type"] or "",
+        "cards": cards,
+        "summary": row["summary"] or "",
+        "full_reading": row["full_reading"] or "",
+    }
+
+
+@app.route("/api/register", methods=["POST", "OPTIONS"])
+def register():
+    denied = api_origin_allowed()
+    if denied:
+        return denied
+    if request.method == "OPTIONS":
+        return Response(status=204)
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(error="请填写邮箱、昵称和密码。"), 400
+    email = normalize_email(payload.get("email"))
+    nickname = payload.get("nickname")
+    password = payload.get("password")
+    if not EMAIL_PATTERN.fullmatch(email) or len(email) > 254:
+        return jsonify(error="请输入有效的邮箱地址。"), 400
+    if not isinstance(nickname, str) or not nickname.strip() or len(nickname.strip()) > 80:
+        return jsonify(error="昵称需要填写，并控制在 80 个字符以内。"), 400
+    if not isinstance(password, str) or len(password) < 8 or len(password.encode("utf-8")) > 72:
+        return jsonify(error="密码至少需要 8 位，并且不能超过 72 个字节。"), 400
+    password_hash = bcrypt.generate_password_hash(password).decode("utf-8")
+    try:
+        with database_connection() as connection:
+            cursor = connection.execute(
+                "INSERT INTO users (email, nickname, password_hash) VALUES (?, ?, ?)",
+                (email, nickname.strip(), password_hash),
+            )
+            user = connection.execute(
+                "SELECT id, email, nickname, created_at FROM users WHERE id = ?",
+                (cursor.lastrowid,),
+            ).fetchone()
+    except sqlite3.IntegrityError:
+        return jsonify(error="这个邮箱已经注册，可以直接登录。"), 409
+    flask_session.clear()
+    flask_session["user_id"] = user["id"]
+    flask_session.permanent = True
+    return jsonify(success=True, user=user_json(user)), 201
+
+
+@app.route("/api/login", methods=["POST", "OPTIONS"])
+def login():
+    denied = api_origin_allowed()
+    if denied:
+        return denied
+    if request.method == "OPTIONS":
+        return Response(status=204)
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(error="请输入邮箱和密码。"), 400
+    email = normalize_email(payload.get("email"))
+    password = payload.get("password")
+    if not email or not isinstance(password, str):
+        return jsonify(error="请输入邮箱和密码。"), 400
+    with database_connection() as connection:
+        user = connection.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    if user is None or not bcrypt.check_password_hash(user["password_hash"], password):
+        return jsonify(error="邮箱或密码不正确。"), 401
+    flask_session.clear()
+    flask_session["user_id"] = user["id"]
+    flask_session.permanent = True
+    return jsonify(success=True, user=user_json(user))
+
+
+@app.get("/api/me")
+@login_required
+def me(user):
+    return jsonify(user=user_json(user))
+
+
+@app.route("/api/logout", methods=["POST", "OPTIONS"])
+def logout():
+    denied = api_origin_allowed()
+    if denied:
+        return denied
+    if request.method == "OPTIONS":
+        return Response(status=204)
+    flask_session.clear()
+    return jsonify(success=True)
+
+
+@app.route("/api/readings", methods=["GET", "POST", "OPTIONS"])
+@login_required
+def cloud_readings(user):
+    if request.method == "OPTIONS":
+        return Response(status=204)
+    if request.method == "GET":
+        with database_connection() as connection:
+            rows = connection.execute(
+                "SELECT id, created_at, question, spread_type, cards, summary, full_reading FROM readings WHERE user_id = ? ORDER BY created_at DESC, id DESC",
+                (user["id"],),
+            ).fetchall()
+        return jsonify(readings=[reading_json(row) for row in rows])
+    try:
+        record = normalize_reading_payload(request.get_json(silent=True))
+    except ValueError as error:
+        return jsonify(error=str(error)), 400
+    with database_connection() as connection:
+        reading_id = insert_reading(connection, user["id"], record)
+    return jsonify(success=True, id=reading_id), 201
+
+
+@app.route("/api/readings/migrate", methods=["POST", "OPTIONS"])
+@login_required
+def migrate_readings(user):
+    if request.method == "OPTIONS":
+        return Response(status=204)
+    payload = request.get_json(silent=True)
+    records = payload.get("readings") if isinstance(payload, dict) else None
+    if not isinstance(records, list) or len(records) > 500:
+        return jsonify(error="本地历史记录格式不正确，单次最多同步 500 条。"), 400
+    try:
+        normalized = [normalize_reading_payload(item, migration=True) for item in records]
+    except ValueError as error:
+        return jsonify(error=str(error)), 400
+    with database_connection() as connection:
+        for record in normalized:
+            existing = connection.execute(
+                "SELECT id FROM readings WHERE user_id = ? AND question = ? AND spread_type = ? AND cards = ? AND summary = ? LIMIT 1",
+                (user["id"], record["question"], record["spread_type"], record["cards"], record["summary"]),
+            ).fetchone()
+            if existing is None:
+                insert_reading(connection, user["id"], record)
+    return jsonify(success=True, migrated=len(normalized))
 
 
 @app.get("/")
@@ -365,8 +677,7 @@ def reading():
         record_history = payload.get("recordHistory", False)
         if type(record_history) is not bool:
             raise LLMError("历史记录选项格式不正确。", 400)
-        selected_user = isinstance(raw_user_info, dict) and raw_user_info.get("enabled") is True and isinstance(raw_user_info.get("id"), str) and bool(raw_user_info["id"])
-        record_history = record_history and selected_user
+        record_history = record_history and current_user() is not None
         messages = build_messages(question, spread, cards, user_info, include_summary=record_history)
         upstream = open_chat_stream(messages, payload.get("provider"))
         chunks = iter_reading_events(iter_chat_text(upstream), spread)

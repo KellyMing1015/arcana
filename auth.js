@@ -1,0 +1,290 @@
+const LOCAL_HISTORY_PREFIX = "arcana_history_";
+
+let authUser = null;
+let onAuthChange = () => {};
+
+function escapeHTML(value) {
+  return String(value).replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[character]);
+}
+
+async function requestJSON(url, options = {}) {
+  const response = await fetch(url, { credentials: "same-origin", ...options });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(payload.error || "请求没有成功，请稍后重试。");
+    error.status = response.status;
+    throw error;
+  }
+  return payload;
+}
+
+export function getCurrentUser() { return authUser; }
+export function isLoggedIn() { return Boolean(authUser); }
+
+function localHistoryEntries() {
+  const entries = [];
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index);
+    if (!key?.startsWith(LOCAL_HISTORY_PREFIX)) continue;
+    try {
+      const records = JSON.parse(localStorage.getItem(key) || "[]");
+      if (Array.isArray(records)) entries.push({ key, records });
+    } catch {
+      // 损坏的旧数据保留在本机，不参与迁移。
+    }
+  }
+  return entries;
+}
+
+function migrationRecords(entries) {
+  return entries.flatMap(({ records }) => records).flatMap((record) => {
+    if (!record || typeof record !== "object" || !Array.isArray(record.cards)) return [];
+    return [{
+      createdAt: record.createdAt,
+      question: record.question || "",
+      spread: record.spread,
+      spread_type: record.spreadLabel,
+      cards: record.cards,
+      summary: record.summary || "",
+      full_reading: record.fullReading || "",
+    }];
+  });
+}
+
+function closeOverlay() {
+  document.querySelector("#account-overlay")?.remove();
+  document.body.classList.remove("account-open");
+  const shell = document.querySelector(".site-shell");
+  if (shell) shell.inert = Boolean(document.querySelector("#provider-settings"));
+  if (["#login", "#register", "#history"].includes(location.hash)) history.replaceState(null, "", location.pathname + location.search);
+  document.querySelector("#account-button")?.focus();
+}
+
+function createOverlay(label) {
+  document.querySelector("#account-overlay")?.remove();
+  const overlay = document.createElement("div");
+  overlay.id = "account-overlay";
+  overlay.className = "account-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-label", label);
+  document.body.append(overlay);
+  document.body.classList.add("account-open");
+  document.querySelector(".site-shell").inert = true;
+  return overlay;
+}
+
+function authPage(mode) {
+  const register = mode === "register";
+  const overlay = createOverlay(register ? "注册 Arcana" : "登录 Arcana");
+  location.hash = register ? "register" : "login";
+  overlay.innerHTML = `<main class="auth-page">
+    <button class="auth-close" type="button" aria-label="返回抽牌">← 返回</button>
+    <section class="auth-card">
+      <span class="auth-sigil" aria-hidden="true">✦</span>
+      <p class="eyebrow">ARCANA ACCOUNT</p>
+      <h1>${register ? "创建你的 Arcana 账号" : "欢迎回来"}</h1>
+      ${register ? `<p class="auth-intro">登录后，牌阵记录会安全地保存在你的云端账号中。</p>` : ""}
+      <form id="auth-form" novalidate>
+        ${register ? `<label><span>昵称</span><input name="nickname" type="text" maxlength="80" autocomplete="nickname" placeholder="希望 Arcana 怎么称呼你" required></label>` : ""}
+        <label><span>邮箱</span><input name="email" type="email" maxlength="254" autocomplete="email" placeholder="name@example.com" required></label>
+        <label><span>密码</span><input name="password" type="password" minlength="8" maxlength="72" autocomplete="${register ? "new-password" : "current-password"}" placeholder="至少 8 位" required></label>
+        ${register ? `<label><span>确认密码</span><input name="confirmPassword" type="password" minlength="8" maxlength="72" autocomplete="new-password" placeholder="再次输入密码" required></label>` : ""}
+        <button class="auth-submit" type="submit">${register ? "注册并登录" : "登录"}</button>
+        <p id="auth-feedback" class="auth-feedback" role="status" aria-live="polite"></p>
+      </form>
+      <button class="auth-switch" type="button">${register ? "已经有账号？直接登录" : "还没有账号？创建一个"}</button>
+    </section>
+  </main>`;
+  overlay.querySelector(".auth-close").addEventListener("click", closeOverlay);
+  overlay.querySelector(".auth-switch").addEventListener("click", () => authPage(register ? "login" : "register"));
+  overlay.querySelector("#auth-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const feedback = overlay.querySelector("#auth-feedback");
+    const submit = form.querySelector(".auth-submit");
+    const body = {
+      email: form.elements.email.value.trim(),
+      password: form.elements.password.value,
+      ...(register ? { nickname: form.elements.nickname.value.trim() } : {}),
+    };
+    if (register && !body.nickname) { feedback.textContent = "请填写昵称。"; return; }
+    if (!body.email || !body.password) { feedback.textContent = "请把邮箱和密码填写完整。"; return; }
+    if (register && form.elements.confirmPassword.value !== body.password) { feedback.textContent = "两次输入的密码不一致。"; return; }
+    submit.disabled = true;
+    submit.textContent = register ? "正在创建账号…" : "正在登录…";
+    feedback.textContent = "";
+    try {
+      const payload = await requestJSON(register ? "/api/register" : "/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      authUser = payload.user;
+      closeOverlay();
+      updateAccountHeader();
+      onAuthChange(authUser);
+      await offerHistoryMigration();
+    } catch (error) {
+      feedback.textContent = error.message;
+      feedback.classList.add("is-error");
+    } finally {
+      submit.disabled = false;
+      submit.textContent = register ? "注册并登录" : "登录";
+    }
+  });
+  overlay.querySelector("input")?.focus();
+}
+
+async function offerHistoryMigration() {
+  const entries = localHistoryEntries();
+  const records = migrationRecords(entries);
+  if (!authUser || !records.length) return;
+  const overlay = createOverlay("同步本地历史记录");
+  overlay.innerHTML = `<section class="migration-dialog">
+    <span class="auth-sigil" aria-hidden="true">✦</span>
+    <h2>检测到本地历史记录</h2>
+    <p>发现 ${records.length} 条保存在这个浏览器里的牌阵。是否同步到云端账号？</p>
+    <div><button class="migration-later" type="button">暂不同步</button><button class="migration-confirm" type="button">同步到云端</button></div>
+    <p class="auth-feedback" role="status" aria-live="polite"></p>
+  </section>`;
+  overlay.querySelector(".migration-later").addEventListener("click", closeOverlay);
+  overlay.querySelector(".migration-confirm").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const feedback = overlay.querySelector(".auth-feedback");
+    button.disabled = true;
+    button.textContent = "正在同步…";
+    try {
+      await requestJSON("/api/readings/migrate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ readings: records }),
+      });
+      entries.forEach(({ key }) => localStorage.removeItem(key));
+      feedback.textContent = `已同步 ${records.length} 条记录。`;
+      setTimeout(closeOverlay, 700);
+    } catch (error) {
+      feedback.textContent = error.message;
+      feedback.classList.add("is-error");
+      button.disabled = false;
+      button.textContent = "重新同步";
+    }
+  });
+}
+
+function formatCloudTime(value) {
+  if (!value) return "";
+  const parsed = new Date(String(value).replace(" ", "T") + (String(value).includes("Z") ? "" : "Z"));
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(parsed);
+}
+
+function cloudCards(record) {
+  return `<div class="history-card-thumbnails ${record.cards.length === 10 ? "history-card-thumbnails-10" : ""}">${record.cards.map((card) => `<figure class="history-card-thumb"><img src="/assets/cards/${escapeHTML(card.id)}.webp" alt="${escapeHTML(card.chinese || "塔罗牌")}" style="transform:rotate(${card.reversed ? 180 : 0}deg)"><figcaption>${escapeHTML(card.chinese || "塔罗牌")}</figcaption></figure>`).join("")}</div>`;
+}
+
+function historyContent(records) {
+  if (!records.length) return `<div class="history-empty"><span>◇</span><strong>还没有历史牌阵</strong><p>完成一次解读后，它会自动保存在这里。</p></div>`;
+  return `<section class="history-timeline">${records.map((record) => `<article class="history-entry cloud-history-entry">
+    <span class="history-dot" aria-hidden="true"></span>
+    <div class="history-bubble">
+      <header><time>${escapeHTML(formatCloudTime(record.created_at))}</time><span>${escapeHTML(record.spread_type)}</span></header>
+      <p class="history-question">Q // ${escapeHTML(record.question)}</p>
+      <blockquote>“${escapeHTML(record.summary || record.full_reading.slice(0, 120))}”</blockquote>
+      ${cloudCards(record)}
+      ${record.full_reading ? `<details class="cloud-reading-details"><summary>查看完整解读</summary><p>${escapeHTML(record.full_reading)}</p></details>` : ""}
+    </div>
+  </article>`).join("")}</section>`;
+}
+
+async function openHistory() {
+  const overlay = createOverlay("历史牌阵");
+  location.hash = "history";
+  overlay.innerHTML = `<main class="cloud-history-page"><header><button class="auth-close" type="button">← 返回设置</button><span>${authUser ? escapeHTML(authUser.nickname) : "未登录"}</span></header><div class="history-heading"><span class="eyebrow">TAROT ARCHIVE</span><h1>历史牌阵</h1><p>${authUser ? "正在读取云端记录…" : "0 条云端记录"}</p></div><div id="cloud-history-list">${authUser ? "" : `<div class="history-empty"><span>◇</span><strong>还没有历史牌阵</strong><p>登录后，完成的解读会自动保存在这里。</p><button class="history-login-button" type="button">登录 Arcana</button></div>`}</div></main>`;
+  overlay.querySelector(".auth-close").addEventListener("click", closeOverlay);
+  if (!authUser) {
+    overlay.querySelector(".history-login-button").addEventListener("click", () => authPage("login"));
+    return;
+  }
+  try {
+    const payload = await requestJSON("/api/readings");
+    overlay.querySelector(".history-heading p").textContent = `${payload.readings.length} 条云端记录`;
+    overlay.querySelector("#cloud-history-list").innerHTML = historyContent(payload.readings);
+  } catch (error) {
+    if (error.status === 401) {
+      authUser = null;
+      updateAccountHeader();
+      closeOverlay();
+      authPage("login");
+      return;
+    }
+    overlay.querySelector("#cloud-history-list").innerHTML = `<div class="history-empty"><strong>读取失败</strong><p>${escapeHTML(error.message)}</p></div>`;
+  }
+}
+
+function updateAccountHeader() {
+  const host = document.querySelector("#account-area");
+  if (!host) return;
+  host.innerHTML = authUser
+    ? `<button id="account-button" class="account-button is-logged-in" type="button" aria-haspopup="menu" aria-expanded="false"><span class="account-avatar" aria-hidden="true">${escapeHTML(authUser.nickname.slice(0, 1).toUpperCase())}</span><strong>${escapeHTML(authUser.nickname)}</strong><i aria-hidden="true">⌄</i></button><div class="account-menu" id="account-menu" role="menu" hidden><button type="button" data-account-action="history" role="menuitem">历史牌阵</button><button type="button" data-account-action="logout" role="menuitem">退出登录</button></div>`
+    : `<button id="account-button" class="account-button" type="button"><span class="account-avatar" aria-hidden="true"></span><strong>登录</strong></button>`;
+  const button = host.querySelector("#account-button");
+  if (!authUser) {
+    button.addEventListener("click", () => authPage("login"));
+    return;
+  }
+  const menu = host.querySelector("#account-menu");
+  button.addEventListener("click", () => {
+    menu.hidden = !menu.hidden;
+    button.setAttribute("aria-expanded", String(!menu.hidden));
+  });
+  menu.querySelector('[data-account-action="history"]').addEventListener("click", openHistory);
+  menu.querySelector('[data-account-action="logout"]').addEventListener("click", async () => {
+    await requestJSON("/api/logout", { method: "POST" }).catch(() => {});
+    authUser = null;
+    updateAccountHeader();
+    onAuthChange(null);
+  });
+}
+
+export async function saveCloudReading(record) {
+  if (!authUser) return false;
+  try {
+    await requestJSON("/api/readings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(record),
+    });
+    return true;
+  } catch (error) {
+    if (error.status === 401) {
+      authUser = null;
+      updateAccountHeader();
+      onAuthChange(null);
+    }
+    throw error;
+  }
+}
+
+export function openLogin() { authPage("login"); }
+export function openCloudHistory() { return openHistory(); }
+
+export async function initializeAuth(callback = () => {}) {
+  onAuthChange = callback;
+  document.addEventListener("arcana:account-host-ready", updateAccountHeader);
+  document.addEventListener("arcana:open-cloud-history", openHistory);
+  try {
+    authUser = (await requestJSON("/api/me")).user;
+  } catch (error) {
+    if (error.status !== 401) console.warn("Arcana account check failed", error);
+    authUser = null;
+  }
+  updateAccountHeader();
+  const initialHash = location.hash;
+  if (initialHash === "#login") authPage("login");
+  if (initialHash === "#register") authPage("register");
+  if (initialHash === "#history") openHistory();
+  callback(authUser);
+}

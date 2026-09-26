@@ -1,5 +1,6 @@
 import { DECK, cardFace } from "./cards.js";
-import { getActiveProvider, getActiveProviderLabel, getProviderChoices, getUserInfo, initializeProviderSettings, saveHistoryRecord, setActiveProvider } from "./settings.js";
+import { getActiveProvider, getActiveProviderLabel, getProviderChoices, getUserInfo, initializeProviderSettings, setActiveProvider } from "./settings.js";
+import { getCurrentUser, initializeAuth, isLoggedIn, saveCloudReading } from "./auth.js";
 
 const app = document.querySelector("#app");
 const state = {
@@ -21,7 +22,6 @@ const state = {
   chatMessages: [],
   conversationClosed: false,
   userInfo: { enabled: false },
-  historyUserId: null,
 };
 const labels = {
   1: ["此刻"],
@@ -78,19 +78,6 @@ function escapeHTML(value) {
   })[character]);
 }
 
-function eastEightTimestamp(date = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Shanghai",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(date).reduce((result, part) => ({ ...result, [part.type]: part.value }), {});
-  return `${parts.year}.${parts.month}.${parts.day} // ${parts.hour}:${parts.minute}`;
-}
-
 function splitReadingSummary(value) {
   const text = String(value || "").trim();
   const match = text.match(/\s*【总结】\s*[:：]?\s*([\s\S]+)$/);
@@ -102,17 +89,14 @@ function splitReadingSummary(value) {
   };
 }
 
-function saveCompletedReading(summary) {
-  if (!state.historyUserId || !summary) return false;
+async function saveCompletedReading(summary, fullReading) {
+  if (!isLoggedIn()) return false;
   const spreadLabel = state.spread === 1 ? "单牌" : state.spread === 3 ? "三牌阵" : "凯尔特十字";
-  return saveHistoryRecord(state.historyUserId, {
-    id: crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`,
-    createdAt: Date.now(),
-    timestamp: eastEightTimestamp(),
+  return saveCloudReading({
     question: state.question,
-    spread: state.spread,
-    spreadLabel,
+    spread_type: spreadLabel,
     summary,
+    full_reading: fullReading,
     cards: state.selected.map((card, index) => ({
       id: card.id,
       chinese: card.chinese,
@@ -144,7 +128,7 @@ function go(stage) {
 }
 
 function backArt() {
-  return `<span class="back-ornament" aria-hidden="true"><img src="/assets/ui/card-back-cream-magic-v3-mobile.jpg" width="682" height="1024" alt="" decoding="async"></span>`;
+  return `<span class="back-ornament" aria-hidden="true"><img src="/assets/ui/card-back-cream-magic-v3.png?v=5" width="1024" height="1536" alt="" decoding="async"></span>`;
 }
 
 function renderQuestion() {
@@ -205,7 +189,6 @@ function renderQuestion() {
     state.chatMessages = [];
     state.conversationClosed = false;
     state.userInfo = getUserInfo();
-    state.historyUserId = state.userInfo.enabled && state.userInfo.id ? state.userInfo.id : null;
     go("shuffle");
   });
 }
@@ -415,10 +398,10 @@ function renderFan() {
   state.isSelecting = false;
   state.hoveredId = null;
   fanOffset = 0;
-  app.innerHTML = `<section class="ritual-screen fan-screen screen-enter">
+  app.innerHTML = `<section class="ritual-screen fan-screen fan-spread-${state.spread} screen-enter">
     <div class="ritual-top"><span>03 / 04 — 选牌</span><span>ARCANA · ${state.spread === 1 ? "单牌" : state.spread === 3 ? "三牌阵" : "凯尔特十字"}</span></div>
     <div class="selection-tray selection-tray-${state.spread}" id="selection-tray">${positionLabels().map((label, index) => `<div class="tray-item"><div class="tray-slot" id="selection-slot-${index}"><span>${String(index + 1).padStart(2, "0")}</span></div><small>${label}</small></div>`).join("")}</div>
-    <div class="fan-status"><strong id="fan-selection-count">选择 ${state.spread} 张牌</strong><span id="fan-instruction">左右滑动牌堆，点击一张牌</span></div>
+    <div class="fan-status"><strong id="fan-selection-count">左右滑动选牌</strong><span class="sr-only" id="fan-instruction">左右滑动牌堆，点击一张牌</span></div>
     <div class="fan-area" id="fan-area" tabindex="0" role="group" aria-label="横向弧形塔罗牌堆。左右滑动浏览，点击一次让牌浮起，再点击同一张确认选择。键盘可用左右方向键浏览、回车确认。">
       <div class="fan-arc-glow" aria-hidden="true"></div>
       ${state.deck.map(fanBack).join("")}
@@ -850,7 +833,7 @@ async function fetchReading(output, onFirstContent, signal) {
         reversed: card.reversed,
       })),
       userInfo: state.userInfo,
-      recordHistory: Boolean(state.historyUserId),
+      recordHistory: true,
       ...(provider ? { provider } : {}),
     }),
     signal,
@@ -864,7 +847,7 @@ async function fetchReading(output, onFirstContent, signal) {
         element.textContent = threeCardFrameworks[payload.framework][index];
       });
     }
-  }, onFirstContent, signal, state.historyUserId ? "【总结】" : "");
+  }, onFirstContent, signal, isLoggedIn() ? "【总结】" : "");
   if (!state.conversationId) throw new Error("解读服务没有建立对话，请重新解读。");
   return reading;
 }
@@ -1183,7 +1166,6 @@ function renderResult() {
     state.chatMessages = [];
     state.conversationClosed = false;
     state.userInfo = { enabled: false };
-    state.historyUserId = null;
     go("question");
   });
   const button = document.querySelector("#interpret");
@@ -1231,7 +1213,17 @@ function renderResult() {
       const { reading, summary } = splitReadingSummary(completedReading);
       state.initialReading = reading || completedReading.trim();
       output.textContent = state.initialReading;
-      saveCompletedReading(summary);
+      const note = actions.querySelector("p");
+      if (isLoggedIn()) {
+        try {
+          await saveCompletedReading(summary, state.initialReading);
+          note.textContent = `已保存到 ${getCurrentUser().nickname} 的云端历史。`;
+        } catch (saveError) {
+          note.textContent = `解读已完成，但云端保存失败：${saveError.message}`;
+        }
+      } else {
+        note.textContent = "登录后可保存本次记录";
+      }
       button.textContent = "继续对话";
       button.dataset.action = "conversation";
     } catch (error) {
@@ -1266,4 +1258,5 @@ initializeProviderSettings(() => {
   if (indicator) indicator.textContent = getActiveProviderLabel();
   refreshResultProviderSelect();
 });
+initializeAuth(() => {});
 render();

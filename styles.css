@@ -1216,6 +1216,97 @@ a:focus-visible,
   .settings-layout { min-height: calc(100vh - 70px); }
 }
 
+/* 账号、登录与云端历史。 */
+.header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
+.account-area { position: relative; flex: none; }
+.settings-account-corner { position: fixed; z-index: 8; left: clamp(18px, 3vw, 42px); bottom: clamp(18px, 3vw, 34px); }
+.settings-account-corner .account-menu { top: auto; right: auto; bottom: calc(100% + 8px); left: 0; }
+.account-button {
+  min-height: 34px;
+  padding: 3px 11px 3px 5px;
+  border: 1px solid rgba(180, 142, 91, .42);
+  border-radius: 999px;
+  background: rgba(255, 251, 242, .76);
+  color: #75617f;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+  letter-spacing: .04em;
+}
+.account-button:hover:not(:disabled) { border-color: rgba(169, 124, 61, .7); background: rgba(255, 252, 245, .95); }
+.account-button strong { max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-button i { color: #aa8a5b; font-style: normal; }
+.account-avatar { width: 25px; height: 25px; border: 1px solid rgba(190, 151, 96, .5); border-radius: 50%; background: linear-gradient(145deg, #fffdf7, #ead9bc); display: grid; place-items: center; color: #8a6a92; font-family: var(--serif); font-size: 12px; }
+.account-avatar:empty::before { content: ""; width: 9px; height: 9px; border: 1px solid #aa8b62; border-radius: 50%; box-shadow: 0 8px 0 -2px #f7eddd, 0 8px 0 1px #aa8b62; transform: translateY(-3px); }
+.account-menu { position: absolute; z-index: 50; top: calc(100% + 8px); right: 0; width: 132px; padding: 6px; border: 1px solid rgba(183, 145, 91, .35); border-radius: 14px; background: rgba(255, 251, 243, .95); box-shadow: 0 16px 36px rgba(72, 54, 82, .15); backdrop-filter: blur(18px); }
+.account-menu[hidden] { display: none; }
+.account-menu button { width: 100%; min-height: 38px; padding: 0 12px; border: 0; border-radius: 9px; background: transparent; color: #67596d; text-align: left; font-size: 11px; }
+.account-menu button:hover { background: rgba(221, 202, 171, .24); }
+
+.account-open { overflow: hidden; }
+.account-overlay { position: fixed; inset: 0; z-index: 2200; overflow-y: auto; background: linear-gradient(145deg, #faf6ed 0%, #f3e9e6 52%, #eee7f1 100%); }
+.account-overlay::before { position: fixed; inset: 0; content: ""; pointer-events: none; background: radial-gradient(circle at 20% 18%, rgba(255,255,255,.9), transparent 34%), radial-gradient(circle at 78% 78%, rgba(209,190,223,.35), transparent 36%); }
+.auth-page { position: relative; z-index: 1; min-height: 100dvh; padding: 26px 20px 50px; display: grid; place-items: center; }
+.auth-close { position: absolute; top: 24px; left: clamp(20px, 4vw, 54px); padding: 8px 0; border: 0; background: transparent; color: #7e7083; font-size: 12px; }
+.auth-card {
+  width: min(100%, 470px);
+  padding: clamp(34px, 6vw, 58px);
+  border: 1px solid rgba(183, 143, 82, .5);
+  border-radius: 32px;
+  background: rgba(255, 252, 245, .58);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 28px 75px rgba(89, 67, 96, .12);
+  backdrop-filter: blur(24px) saturate(120%);
+  text-align: center;
+}
+.auth-sigil { width: 43px; height: 43px; margin: 0 auto 16px; border: 1px solid rgba(184, 140, 76, .55); border-radius: 50%; display: grid; place-items: center; color: #bd9054; font-size: 18px; }
+.auth-card h1 { margin: 10px 0 8px; color: #6d5a78; font-family: var(--serif); font-size: clamp(31px, 5vw, 45px); font-weight: 500; letter-spacing: -.04em; }
+.auth-intro { margin: 0 auto 28px; max-width: 330px; color: #948790; font-size: 12px; line-height: 1.7; }
+.auth-card form { display: grid; gap: 16px; text-align: left; }
+.auth-card label { display: grid; gap: 8px; color: #7c6b75; font-size: 10px; letter-spacing: .08em; }
+.auth-card input { width: 100%; min-height: 50px; padding: 0 16px; border: 1px solid rgba(187, 144, 82, .55); border-radius: 14px; background: rgba(255,255,255,.48); color: #564b59; font: inherit; font-size: 14px; outline: none; }
+.auth-card input:focus { border-color: #b18143; box-shadow: 0 0 0 4px rgba(196, 155, 92, .14); }
+.auth-submit { min-height: 52px; margin-top: 5px; border: 0; border-radius: 16px; background: linear-gradient(120deg, #b7894c, #e0bd7c 48%, #a77b43); color: #fffdf8; box-shadow: 0 14px 30px rgba(158, 112, 58, .22); font-weight: 700; letter-spacing: .12em; }
+.auth-switch { margin-top: 19px; padding: 5px; border: 0; background: transparent; color: #90789a; font-size: 11px; }
+.auth-feedback { min-height: 20px; margin: 0; color: #7f6b82; font-size: 11px; line-height: 1.6; text-align: center; }
+.auth-feedback.is-error { color: #b45f6c; }
+
+.migration-dialog { position: relative; z-index: 1; width: min(calc(100% - 36px), 450px); margin: max(90px, 18dvh) auto 40px; padding: 38px; border: 1px solid rgba(183, 143, 82, .5); border-radius: 28px; background: rgba(255, 252, 245, .8); box-shadow: 0 28px 75px rgba(89, 67, 96, .15); backdrop-filter: blur(24px); text-align: center; }
+.migration-dialog h2 { margin: 8px 0; color: #6d5a78; font-family: var(--serif); font-size: 30px; font-weight: 500; }
+.migration-dialog > p { color: #8f818d; font-size: 12px; line-height: 1.8; }
+.migration-dialog > div { margin-top: 24px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.migration-dialog button { min-height: 46px; border-radius: 14px; }
+.migration-later { border: 1px solid rgba(167, 135, 96, .35); background: transparent; color: #7f707d; }
+.migration-confirm { border: 0; background: linear-gradient(120deg, #b7894c, #ddbb7d); color: white; }
+
+.cloud-history-page { position: relative; z-index: 1; width: min(calc(100% - 40px), 920px); margin: 0 auto; padding: 25px 0 80px; }
+.cloud-history-page > header { min-height: 50px; display: flex; align-items: center; justify-content: space-between; color: #84748a; font-size: 11px; }
+.cloud-history-page .auth-close { position: static; }
+.cloud-history-page .history-heading { margin-top: 38px; }
+.cloud-history-page .history-heading h1 { color: #6d5a78; }
+.cloud-history-entry .history-bubble { user-select: text; -webkit-user-select: text; }
+.cloud-reading-details { margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(178, 148, 163, .23); }
+.cloud-reading-details summary { color: #8a718e; cursor: pointer; font-size: 10px; }
+.cloud-reading-details p { margin: 13px 0 0; color: #645969; font-size: 13px; line-height: 1.85; white-space: pre-wrap; }
+.history-login-button { min-height: 42px; margin-top: 14px; padding: 0 20px; border: 1px solid rgba(183, 143, 82, .5); border-radius: 999px; background: rgba(255, 251, 242, .82); color: #806b88; font-size: 11px; }
+
+@media (max-width: 680px) {
+  .site-header { gap: 8px; }
+  .header-constellation { display: none; }
+  .header-actions { gap: 6px; min-width: 0; }
+  .prototype-tag { max-width: 84px; }
+  .account-button { min-height: 30px; padding-right: 8px; }
+  .account-avatar { width: 22px; height: 22px; font-size: 10px; }
+  .account-button strong { max-width: 54px; font-size: 9px; }
+  .settings-account-corner { left: 18px; bottom: 18px; }
+  .auth-page { align-items: center; padding: 76px 18px 34px; }
+  .auth-close { top: 22px; left: 20px; }
+  .auth-card { padding: 30px 22px; border-radius: 26px; }
+  .migration-dialog { padding: 30px 22px; }
+  .cloud-history-page { width: calc(100% - 30px); }
+  .cloud-history-page .history-heading { margin-top: 24px; }
+}
+
 @media (max-height: 720px) and (min-width: 681px) {
   .question-screen { padding-top: 22px; padding-bottom: 22px; }
   .question-card-stage { min-height: 460px; }
@@ -1628,4 +1719,58 @@ a:focus-visible,
   .history-card-thumb img { width: 36px; }
   .history-card-thumb img { height: 53px; }
   .history-card-thumbnails-10 { width: 208px; grid-template-columns: repeat(5, 36px); gap: 7px; }
+}
+
+/* 手机端选牌与牌阵结果页的纵向节奏。放在文件末尾，确保覆盖旧版移动端规则。 */
+@media (max-width: 680px) {
+  .fan-status {
+    min-height: 30px;
+    margin-top: 14px;
+    padding: 5px 20px;
+    gap: 0;
+  }
+  .fan-status strong { font-size: 12px; line-height: 1.35; }
+  .fan-status .sr-only { position: absolute; }
+  .fan-area {
+    margin-top: 0;
+    transform: translateY(5dvh);
+  }
+  .fan-card { box-shadow: none; }
+  .fan-spread-10 .fan-card::before { box-shadow: none; }
+
+  .result-screen .result-top {
+    width: calc(100% - 16px);
+    grid-template-columns: 1fr auto;
+    padding-left: 10px;
+    padding-right: 14px;
+  }
+  .result-top .ritual-back {
+    justify-self: start;
+    padding-left: 0;
+    text-align: left;
+  }
+  .result-screen:not(.has-reading) .result-heading {
+    min-height: clamp(90px, 14dvh, 142px);
+    padding: 0 22px;
+    display: grid;
+    place-items: center;
+  }
+  .result-screen:not(.has-reading) .result-heading .result-question-title {
+    max-width: min(82vw, 520px);
+    margin: 0;
+    color: #968c99;
+    font-family: var(--sans);
+    font-size: clamp(17px, 4.8vw, 22px);
+    font-style: italic;
+    font-weight: 400;
+    letter-spacing: .015em;
+    line-height: 1.55;
+  }
+  .result-screen:not(.has-reading) .result-layout-1,
+  .result-screen:not(.has-reading) .result-layout-3 {
+    margin-top: 0;
+  }
+  .result-screen:not(.has-reading) .result-actions {
+    margin: clamp(18px, 3dvh, 30px) auto clamp(62px, 9dvh, 92px);
+  }
 }

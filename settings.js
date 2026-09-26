@@ -324,7 +324,7 @@ function settingsHome() {
     <section class="settings-home-group" aria-label="设置项目">
       <button type="button" data-settings-section="providers"><span><strong>供应商</strong><small>添加、编辑或切换解读模型</small></span><em>${settings.providers.length} 个配置　›</em></button>
       <button type="button" data-settings-section="profile-list"><span><strong>用户信息</strong><small>管理不同用户的个人背景</small></span><em>${userProfiles.find((profile) => profile.isActive)?.nickname ? `${escapeHTML(userProfiles.find((profile) => profile.isActive).nickname)}　›` : `${userProfiles.length} 位用户　›`}</em></button>
-      <button type="button" data-settings-section="history"><span><strong>历史牌阵</strong><small>按用户查看过去三个月的解读</small></span><em>查看记录　›</em></button>
+      <button type="button" data-cloud-history><span><strong>历史牌阵</strong><small>查看登录账号的云端记录</small></span><em>查看记录　›</em></button>
     </section>
   </main>`;
 }
@@ -394,7 +394,9 @@ function renderSettings(message = "") {
   overlay.innerHTML = `<div class="settings-page">
     <header class="settings-header"><span class="settings-brand"><span aria-hidden="true"></span> ARCANA <small>/ SETTINGS</small></span><button id="settings-back" type="button">${home ? "← 返回抽牌" : "← 返回设置"}</button></header>
     ${content}
+    <div class="settings-account-corner"><div class="account-area" id="account-area"></div></div>
   </div>`;
+  document.dispatchEvent(new CustomEvent("arcana:account-host-ready"));
   overlay.querySelector("#settings-back").addEventListener("click", () => {
     if (home) closeSettings();
     else if (activeSection === "profile-edit") { activeSection = "profile-list"; editingUserId = null; renderSettings(); }
@@ -405,6 +407,9 @@ function renderSettings(message = "") {
     pendingDeleteId = null;
     renderSettings();
   }));
+  overlay.querySelector("[data-cloud-history]")?.addEventListener("click", () => {
+    document.dispatchEvent(new CustomEvent("arcana:open-cloud-history"));
+  });
   if (activeSection === "profile-list") bindUserManager(overlay);
   if (activeSection === "profile-edit") bindUserProfileEditor(overlay);
   if (activeSection === "providers") bindProviderEditor(overlay);
