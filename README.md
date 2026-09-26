@@ -19,11 +19,11 @@ python3 -m venv .venv
 
 如果 VPS 上已经有 `.venv`，直接启动即可。`app.py` 会检查 Flask、邮箱密码加密和环境变量读取所需的运行依赖；发现缺失时，会自动按 `requirements.txt` 安装后继续启动。因此日常从 GitHub 拉取更新时，不需要额外增加安装命令。
 
-在浏览器打开 `http://127.0.0.1:4173/`。点击左上角 **ARCANA 设置**，可以进入“供应商”“用户信息”和“历史牌阵”。设置页左下角的登录气泡用于注册或登录账号。供应商页面填写名称、API Base URL、API Key，再点“获取模型”从列表选择模型；如果供应商不支持模型列表，也可手动填写模型名。用户信息页面可以保存多人资料，并用每行右侧开关选择本次解读使用的用户；全部关闭时不会发送个人信息。再次运行时，只需执行启动命令。结束服务时按 `Control + C`。
+在浏览器打开 `http://127.0.0.1:4173/`。点击左上角 **ARCANA 设置**，可以进入“供应商”“用户信息”和“历史牌阵”；首页右上角显示“未登录”或当前账号昵称。供应商页面填写名称、API Base URL、API Key，再点“获取模型”从列表选择模型；如果供应商不支持模型列表，也可手动填写模型名。用户信息页面可以保存多人资料，并用每行右侧开关选择本次解读使用的用户；全部关闭时不会发送个人信息。再次运行时，只需执行启动命令。结束服务时按 `Control + C`。
 
 请用上面的本地网址打开，不能直接双击 `index.html`：`file://` 页面无法连接 Flask 解读接口。
 
-供应商配置和解读用的多人档案仍保存在当前浏览器的本地存储中，其中包含页面填写的 API Key；换浏览器或清除网站数据后，需要重新填写。账号和牌阵历史保存在项目目录的 `arcana.db`，密码只保存 bcrypt 哈希。未登录仍可正常抽牌和解读，但不会写入云端历史。
+登录后，供应商配置和解读用的多人档案会同步到账号；整个设置数据包使用服务器密钥加密后存入 `arcana.db`。浏览器仍保留当前账号的本地副本以供页面使用，退出登录时会清除这份账号缓存。首次使用此版本登录时，如果账号还没有云端设置，会自动上传当前浏览器已有的设置。账号密码只保存 bcrypt 哈希。未登录仍可正常添加本地设置、抽牌和解读，但不会写入云端历史。
 
 ## 可选：服务端默认配置
 
@@ -37,7 +37,7 @@ ARCANA_SECRET_KEY=一串足够长且随机的服务器密钥
 ARCANA_COOKIE_SECURE=0
 ```
 
-`LLM_BASE_URL` 填到 `/v1` 为止，程序会自动补上 `/chat/completions`。未在页面选中供应商时，网站使用这组服务端配置。`ARCANA_SECRET_KEY` 用于保护登录 Session，在 VPS 上必须填写且不能公开。`ARCANA_COOKIE_SECURE` 本机 HTTP 调试保持 `0`；VPS 配好 HTTPS 后改成 `1`。`.env` 和 `arcana.db` 都已被 `.gitignore` 排除，不会上传到 GitHub。修改 `.env` 后需要重启 Flask。
+`LLM_BASE_URL` 填到 `/v1` 为止，程序会自动补上 `/chat/completions`。未在页面选中供应商时，网站使用这组服务端配置。`ARCANA_SECRET_KEY` 同时用于保护登录 Session，并派生账号设置的数据加密密钥；VPS 上必须填写、不能公开，投入使用后也不能随意更换，否则旧的加密设置将无法读取。`ARCANA_COOKIE_SECURE` 本机 HTTP 调试保持 `0`；VPS 配好 HTTPS 后改成 `1`。`.env` 和 `arcana.db` 都已被 `.gitignore` 排除，不会上传到 GitHub。修改 `.env` 后需要重启 Flask。
 
 注册接口会校验邮箱格式和唯一性。真正向邮箱发送验证码或验证链接还需要接入邮件服务商；当前版本没有发送验证邮件。
 
@@ -57,4 +57,4 @@ ARCANA_COOKIE_SECURE=0
 
 `POST /api/models` 使用供应商的 `/models` 接口拉取模型名。`POST /api/reading` 接收 `question`、`spread`、`cards`、`userInfo`，以及可选的 `provider`。三牌阵只调用一次模型：模型先选择六种解读框架之一，前端再更新牌位标题。首次解读会返回 `conversationId`。`POST /api/follow-up` 使用这个编号读取完整历史，并允许每次请求传入新的供应商配置；一副牌最多追问 8 轮。用户也可以通过 `POST /api/conversation/end` 提前结束本次对话。对话暂存在 Flask 进程内，服务重启或超过 6 小时后需要重新抽牌。所有文字都通过 SSE 流式返回；请求开始前的错误返回 `{"error":"具体原因"}`。
 
-账号接口包括 `POST /api/register`、`POST /api/login`、`GET /api/me` 和 `POST /api/logout`。云端历史接口包括 `POST /api/readings`、`GET /api/readings` 和 `POST /api/readings/migrate`。所有历史查询都从 Session 中取得当前用户编号，客户端不能指定其他用户。
+账号接口包括 `POST /api/register`、`POST /api/login`、`GET /api/me` 和 `POST /api/logout`。`GET/PUT /api/account-data` 负责读取和更新当前账号的加密供应商与用户资料。云端历史接口包括 `POST /api/readings`、`GET /api/readings` 和 `POST /api/readings/migrate`。所有账号数据接口都从 Session 中取得当前用户编号，客户端不能指定其他用户。

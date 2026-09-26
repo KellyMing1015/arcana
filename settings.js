@@ -4,6 +4,7 @@ const INITIAL_PROVIDER_MODEL = "【CCMAX】claude-opus-5-5";
 const PROFILE_STORAGE_KEY = "arcana.user-profiles.v2";
 const LEGACY_PROFILE_STORAGE_KEY = "arcana.user-info.v1";
 const HISTORY_STORAGE_PREFIX = "arcana_history_";
+const ACCOUNT_CACHE_USER_KEY = "arcana.account-cache-user.v1";
 const ZODIACS = ["白羊座", "金牛座", "双子座", "巨蟹座", "狮子座", "处女座", "天秤座", "天蝎座", "射手座", "摩羯座", "水瓶座", "双鱼座"];
 
 function escapeHTML(value) {
@@ -89,12 +90,92 @@ let editingUserId = null;
 let historyUserId = userProfiles.find((profile) => profile.isActive)?.id || userProfiles[0]?.id || null;
 let pendingDeleteId = null;
 let onChange = () => {};
+let cloudAccountId = null;
+let cloudSaveChain = Promise.resolve();
+
+async function accountDataRequest(method, body) {
+  const response = await fetch("/api/account-data", {
+    method,
+    credentials: "same-origin",
+    headers: body ? { "Content-Type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || "账号设置同步失败，请稍后重试。");
+  return payload;
+}
+
+function accountDataSnapshot() {
+  return {
+    providerSettings: {
+      providers: settings.providers.map((provider) => ({ ...provider })),
+      activeId: settings.activeId,
+    },
+    profiles: userProfiles.map((profile) => ({ ...profile, focusAreas: [...profile.focusAreas] })),
+  };
+}
+
+function applyAccountData(providerSettings, profiles) {
+  localStorage.setItem(PROVIDER_STORAGE_KEY, JSON.stringify(providerSettings));
+  localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profiles));
+  settings = loadSettings();
+  userProfiles = loadProfiles();
+  selectedId = settings.activeId || INITIAL_PROVIDER_ID;
+  historyUserId = userProfiles.find((profile) => profile.isActive)?.id || userProfiles[0]?.id || null;
+  onChange();
+  if (document.querySelector("#provider-settings")) renderSettings("云端设置已同步。");
+}
+
+function queueCloudSave() {
+  if (!cloudAccountId) return;
+  const snapshot = accountDataSnapshot();
+  cloudSaveChain = cloudSaveChain.then(() => accountDataRequest("PUT", snapshot)).catch((error) => {
+    console.warn("Arcana account settings sync failed", error);
+    showFeedback("已保存在本机，但云端同步失败，请稍后再试。", true);
+  });
+}
+
+export async function syncAccountSettings(userId) {
+  if (!userId) return;
+  const accountId = String(userId);
+  const payload = await accountDataRequest("GET");
+  const cachedOwner = localStorage.getItem(ACCOUNT_CACHE_USER_KEY);
+  if (payload.hasData) {
+    applyAccountData(payload.providerSettings, payload.profiles);
+  } else if (!cachedOwner || cachedOwner === accountId) {
+    await accountDataRequest("PUT", accountDataSnapshot());
+  } else {
+    applyAccountData({ providers: [], activeId: null }, []);
+    await accountDataRequest("PUT", accountDataSnapshot());
+  }
+  localStorage.setItem(ACCOUNT_CACHE_USER_KEY, accountId);
+  cloudAccountId = accountId;
+}
+
+export async function flushAccountSettings() {
+  await cloudSaveChain;
+}
+
+export function disconnectAccountSettings() {
+  cloudAccountId = null;
+  if (!localStorage.getItem(ACCOUNT_CACHE_USER_KEY)) return;
+  localStorage.removeItem(ACCOUNT_CACHE_USER_KEY);
+  localStorage.removeItem(PROVIDER_STORAGE_KEY);
+  localStorage.removeItem(PROFILE_STORAGE_KEY);
+  settings = loadSettings();
+  userProfiles = loadProfiles();
+  selectedId = INITIAL_PROVIDER_ID;
+  historyUserId = null;
+  onChange();
+  if (document.querySelector("#provider-settings")) renderSettings();
+}
 
 function persistProviders(next) {
   try {
     localStorage.setItem(PROVIDER_STORAGE_KEY, JSON.stringify(next));
     settings = next;
     onChange();
+    queueCloudSave();
     return true;
   } catch {
     showFeedback("浏览器没有保存这项配置，请检查是否允许本地存储。", true);
@@ -108,6 +189,7 @@ function persistProfiles(next) {
     localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(normalized));
     userProfiles = normalized;
     onChange();
+    queueCloudSave();
     return true;
   } catch {
     showFeedback("浏览器没有保存个人信息，请检查是否允许本地存储。", true);
@@ -281,7 +363,7 @@ function providerEditor() {
     </div>
     <p id="settings-feedback" class="settings-feedback" role="status" aria-live="polite"></p>
   </form>
-  <p class="settings-storage-note">供应商配置只保存在这个浏览器中；解读时由本机 Flask 转发。</p>`;
+  <p class="settings-storage-note">登录后会加密同步到你的 Arcana 账号；未登录时只保存在当前浏览器。</p>`;
 }
 
 function profileMeta(profile) {
@@ -339,7 +421,7 @@ function userProfileEditor() {
       </div>
       <p id="settings-feedback" class="settings-feedback" role="status" aria-live="polite"></p>
     </form>
-    <p class="settings-storage-note">个人信息只保存在当前浏览器中。列表里未启用用户时，解读请求不会携带任何个人信息。</p>
+    <p class="settings-storage-note">登录后会同步到你的 Arcana 账号。列表里未启用用户时，解读请求不会携带任何个人信息。</p>
   </section></main>`;
 }
 
@@ -418,9 +500,7 @@ function renderSettings(message = "") {
   overlay.innerHTML = `<div class="settings-page">
     <header class="settings-header"><span class="settings-brand"><span aria-hidden="true"></span> ARCANA <small>/ SETTINGS</small></span><button id="settings-back" type="button">${home ? "← 返回抽牌" : "← 返回设置"}</button></header>
     ${content}
-    <div class="settings-account-corner"><div class="account-area" id="account-area"></div></div>
   </div>`;
-  document.dispatchEvent(new CustomEvent("arcana:account-host-ready"));
   overlay.querySelector("#settings-back").addEventListener("click", () => {
     if (home) closeSettings();
     else if (activeSection === "profile-edit") { activeSection = "profile-list"; editingUserId = null; renderSettings(); }

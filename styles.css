@@ -1264,26 +1264,20 @@ a:focus-visible,
 /* 账号、登录与云端历史。 */
 .header-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; }
 .account-area { position: relative; flex: none; }
-.settings-account-corner { position: fixed; z-index: 8; left: clamp(18px, 3vw, 42px); bottom: clamp(18px, 3vw, 34px); }
-.settings-account-corner .account-menu { top: auto; right: auto; bottom: calc(100% + 8px); left: 0; }
 .account-button {
   min-height: 34px;
-  padding: 3px 11px 3px 5px;
+  padding: 3px 13px;
   border: 1px solid rgba(180, 142, 91, .42);
   border-radius: 999px;
   background: rgba(255, 251, 242, .76);
   color: #75617f;
   display: flex;
   align-items: center;
-  gap: 7px;
   font-size: 10px;
   letter-spacing: .04em;
 }
 .account-button:hover:not(:disabled) { border-color: rgba(169, 124, 61, .7); background: rgba(255, 252, 245, .95); }
 .account-button strong { max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.account-button i { color: #aa8a5b; font-style: normal; }
-.account-avatar { width: 25px; height: 25px; border: 1px solid rgba(190, 151, 96, .5); border-radius: 50%; background: linear-gradient(145deg, #fffdf7, #ead9bc); display: grid; place-items: center; color: #8a6a92; font-family: var(--serif); font-size: 12px; }
-.account-avatar:empty::before { content: ""; width: 9px; height: 9px; border: 1px solid #aa8b62; border-radius: 50%; box-shadow: 0 8px 0 -2px #f7eddd, 0 8px 0 1px #aa8b62; transform: translateY(-3px); }
 .account-menu { position: absolute; z-index: 50; top: calc(100% + 8px); right: 0; width: 132px; padding: 6px; border: 1px solid rgba(183, 145, 91, .35); border-radius: 14px; background: rgba(255, 251, 243, .95); box-shadow: 0 16px 36px rgba(72, 54, 82, .15); backdrop-filter: blur(18px); }
 .account-menu[hidden] { display: none; }
 .account-menu button { width: 100%; min-height: 38px; padding: 0 12px; border: 0; border-radius: 9px; background: transparent; color: #67596d; text-align: left; font-size: 11px; }
@@ -1342,10 +1336,8 @@ a:focus-visible,
   .header-constellation { display: none; }
   .header-actions { gap: 6px; min-width: 0; }
   .prototype-tag { max-width: 84px; }
-  .account-button { min-height: 30px; padding-right: 8px; }
-  .account-avatar { width: 22px; height: 22px; font-size: 10px; }
+  .account-button { min-height: 30px; padding: 3px 9px; }
   .account-button strong { max-width: 54px; font-size: 9px; }
-  .settings-account-corner { left: 18px; bottom: 18px; }
   .auth-page { align-items: center; padding: 76px 18px 34px; }
   .auth-close { top: 22px; left: 20px; }
   .auth-card { padding: 30px 22px; border-radius: 26px; }

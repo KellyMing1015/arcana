@@ -2,6 +2,7 @@
 
 import base64
 import binascii
+import hashlib
 import importlib.util
 import json
 import os
@@ -16,6 +17,7 @@ from datetime import datetime
 from functools import wraps
 from pathlib import Path
 from threading import Lock
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 
@@ -24,7 +26,7 @@ ROOT = Path(__file__).resolve().parent
 
 def ensure_runtime_dependencies():
     """在旧 VPS 环境首次启动新版代码时补齐新增的运行依赖。"""
-    required_modules = ("flask", "flask_bcrypt", "dotenv")
+    required_modules = ("flask", "flask_bcrypt", "cryptography", "dotenv")
     missing = [name for name in required_modules if importlib.util.find_spec(name) is None]
     if not missing:
         return
@@ -54,6 +56,7 @@ def ensure_runtime_dependencies():
 ensure_runtime_dependencies()
 
 from dotenv import load_dotenv
+from cryptography.fernet import Fernet, InvalidToken
 from flask import Flask, Response, jsonify, request, send_from_directory, session as flask_session, stream_with_context
 from flask_bcrypt import Bcrypt
 
@@ -146,6 +149,13 @@ def initialize_database():
                 FOREIGN KEY (user_id) REFERENCES users(id)
             );
 
+            CREATE TABLE IF NOT EXISTS account_settings (
+                user_id INTEGER PRIMARY KEY,
+                encrypted_data TEXT NOT NULL,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
             CREATE INDEX IF NOT EXISTS idx_readings_user_created
             ON readings(user_id, created_at DESC, id DESC);
         """)
@@ -189,7 +199,7 @@ def add_cors_headers(response):
     origin = request.headers.get("Origin")
     if origin and allowed_origin():
         response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = "Content-Type"
         response.headers["Access-Control-Allow-Credentials"] = "true"
         response.headers["Vary"] = "Origin"
@@ -242,6 +252,113 @@ def normalize_email(value):
     if not isinstance(value, str):
         return ""
     return value.strip().lower()
+
+
+def account_data_cipher():
+    """使用服务器密钥派生独立的数据加密密钥。"""
+    secret = app.config["SECRET_KEY"]
+    if isinstance(secret, str):
+        secret = secret.encode("utf-8")
+    digest = hashlib.sha256(b"arcana-account-data-v1\0" + secret).digest()
+    return Fernet(base64.urlsafe_b64encode(digest))
+
+
+def encrypt_account_data(value):
+    raw = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    return account_data_cipher().encrypt(raw).decode("ascii")
+
+
+def decrypt_account_data(value):
+    try:
+        raw = account_data_cipher().decrypt(value.encode("ascii"))
+        decoded = json.loads(raw.decode("utf-8"))
+    except (InvalidToken, UnicodeError, json.JSONDecodeError, ValueError) as error:
+        raise ValueError("云端设置无法解密，请确认服务器密钥没有被更改。") from error
+    if not isinstance(decoded, dict):
+        raise ValueError("云端设置格式不正确。")
+    return decoded
+
+
+def normalize_account_data(payload):
+    if not isinstance(payload, dict):
+        raise ValueError("账号设置格式不正确。")
+    provider_settings = payload.get("providerSettings")
+    profiles = payload.get("profiles")
+    if not isinstance(provider_settings, dict) or not isinstance(profiles, list):
+        raise ValueError("账号设置格式不正确。")
+
+    raw_providers = provider_settings.get("providers")
+    active_id = provider_settings.get("activeId")
+    if not isinstance(raw_providers, list) or len(raw_providers) > 20:
+        raise ValueError("供应商配置格式不正确，最多保存 20 个。")
+    providers = []
+    provider_ids = set()
+    for item in raw_providers:
+        if not isinstance(item, dict):
+            raise ValueError("供应商配置格式不正确。")
+        provider_id = item.get("id")
+        name = item.get("name")
+        base_url = item.get("baseUrl")
+        api_key = item.get("apiKey")
+        model = item.get("model")
+        if (
+            not isinstance(provider_id, str) or not provider_id or len(provider_id) > 100
+            or any(ord(char) < 32 for char in provider_id) or provider_id in provider_ids
+            or not isinstance(name, str) or not name.strip() or len(name.strip()) > 60
+            or not isinstance(base_url, str) or not base_url.strip() or len(base_url.strip()) > 2048
+            or not isinstance(api_key, str) or not api_key or len(api_key) > 2000
+            or not isinstance(model, str) or not model.strip() or len(model.strip()) > 200
+        ):
+            raise ValueError("供应商配置格式不正确。")
+        base_url = base_url.strip().rstrip("/")
+        parsed = urlsplit(base_url)
+        if (
+            parsed.scheme not in {"http", "https"} or not parsed.netloc
+            or parsed.username or parsed.password or parsed.query or parsed.fragment
+            or (parsed.scheme == "http" and parsed.hostname not in {"localhost", "127.0.0.1", "::1"})
+        ):
+            raise ValueError("供应商地址需要是安全的 HTTPS 地址。")
+        provider_ids.add(provider_id)
+        providers.append({
+            "id": provider_id,
+            "name": name.strip(),
+            "baseUrl": base_url,
+            "apiKey": api_key,
+            "model": model.strip(),
+        })
+    if active_id is not None and (not isinstance(active_id, str) or active_id not in provider_ids):
+        raise ValueError("当前供应商配置无效。")
+
+    if len(profiles) > 50:
+        raise ValueError("用户信息最多保存 50 位用户。")
+    safe_profiles = []
+    profile_ids = set()
+    active_seen = False
+    for item in profiles:
+        if not isinstance(item, dict):
+            raise ValueError("用户信息格式不正确。")
+        profile_id = item.get("id")
+        if (
+            not isinstance(profile_id, str) or not profile_id or len(profile_id) > 100
+            or any(ord(char) < 32 for char in profile_id) or profile_id in profile_ids
+        ):
+            raise ValueError("用户信息标识无效。")
+        profile_ids.add(profile_id)
+        if type(item.get("isActive")) is not bool:
+            raise ValueError("用户启用状态格式不正确。")
+        normalized = normalize_user_info({**item, "enabled": True}) or {
+            "nickname": "", "age": "", "gender": "", "zodiac": "", "currentStatus": "", "focusAreas": [],
+        }
+        is_active = item.get("isActive") is True
+        if is_active and active_seen:
+            raise ValueError("任何时候最多只能启用一位用户。")
+        active_seen = active_seen or is_active
+        safe_profiles.append({"id": profile_id, **normalized, "isActive": is_active})
+
+    return {
+        "providerSettings": {"providers": providers, "activeId": active_id},
+        "profiles": safe_profiles,
+    }
 
 
 def normalize_reading_payload(payload, migration=False):
@@ -406,6 +523,49 @@ def login():
 @login_required
 def me(user):
     return jsonify(user=user_json(user))
+
+
+@app.route("/api/account-data", methods=["GET", "PUT", "OPTIONS"])
+@login_required
+def account_data(user):
+    """读取或覆盖当前账号的加密供应商配置与用户资料。"""
+    if request.method == "OPTIONS":
+        return Response(status=204)
+    if request.method == "GET":
+        with database_connection() as connection:
+            row = connection.execute(
+                "SELECT encrypted_data, updated_at FROM account_settings WHERE user_id = ?",
+                (user["id"],),
+            ).fetchone()
+        if row is None:
+            return jsonify(
+                hasData=False,
+                providerSettings={"providers": [], "activeId": None},
+                profiles=[],
+            )
+        try:
+            stored = normalize_account_data(decrypt_account_data(row["encrypted_data"]))
+        except ValueError as error:
+            return jsonify(error=str(error)), 500
+        return jsonify(hasData=True, updatedAt=row["updated_at"], **stored)
+
+    try:
+        normalized = normalize_account_data(request.get_json(silent=True))
+    except (ValueError, LLMError) as error:
+        return jsonify(error=str(error)), 400
+    encrypted = encrypt_account_data(normalized)
+    with database_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO account_settings (user_id, encrypted_data, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id) DO UPDATE SET
+                encrypted_data = excluded.encrypted_data,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (user["id"], encrypted),
+        )
+    return jsonify(success=True)
 
 
 @app.route("/api/logout", methods=["POST", "OPTIONS"])

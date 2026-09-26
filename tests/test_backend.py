@@ -431,6 +431,64 @@ class AccountTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("启用一位用户", response.json["error"])
 
+    def test_account_profiles_and_providers_are_encrypted_and_private(self):
+        account_data = {
+            "providerSettings": {
+                "providers": [{
+                    "id": "provider-one",
+                    "name": "备用供应商",
+                    "baseUrl": "https://relay.example/v1",
+                    "apiKey": "private-provider-key",
+                    "model": "model-one",
+                }],
+                "activeId": "provider-one",
+            },
+            "profiles": [{
+                "id": "profile-xiao-ou",
+                "nickname": "小欧",
+                "age": "25",
+                "gender": "女",
+                "zodiac": "天秤座",
+                "currentStatus": "正在做自己的产品",
+                "focusAreas": ["事业", "成长"],
+                "isActive": True,
+            }],
+        }
+        self.assertEqual(self.client.get("/api/account-data").status_code, 401)
+        self.register()
+        empty = self.client.get("/api/account-data")
+        self.assertFalse(empty.json["hasData"])
+        saved = self.client.put("/api/account-data", json=account_data)
+        self.assertEqual(saved.status_code, 200)
+
+        with sqlite3.connect(website.app.config["DATABASE"]) as connection:
+            encrypted = connection.execute("SELECT encrypted_data FROM account_settings").fetchone()[0]
+        self.assertNotIn("private-provider-key", encrypted)
+        self.assertNotIn("正在做自己的产品", encrypted)
+
+        restored = self.client.get("/api/account-data")
+        self.assertTrue(restored.json["hasData"])
+        self.assertEqual(restored.json["providerSettings"], account_data["providerSettings"])
+        self.assertEqual(restored.json["profiles"], account_data["profiles"])
+
+        self.client.post("/api/logout")
+        self.register(email="other@example.com", nickname="另一个人")
+        other = self.client.get("/api/account-data")
+        self.assertFalse(other.json["hasData"])
+        self.assertEqual(other.json["profiles"], [])
+
+    def test_account_data_rejects_multiple_active_profiles(self):
+        self.register()
+        response = self.client.put("/api/account-data", json={
+            "providerSettings": {"providers": [], "activeId": None},
+            "profiles": [
+                {"id": "one", "isActive": True},
+                {"id": "two", "isActive": True},
+            ],
+        })
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("最多只能启用一位", response.json["error"])
+
 
 class RelayTests(unittest.TestCase):
     def test_compatible_post_url_and_private_key_header(self):

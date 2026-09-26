@@ -1,4 +1,9 @@
-import { getUserProfiles } from "./settings.js";
+import {
+  disconnectAccountSettings,
+  flushAccountSettings,
+  getUserProfiles,
+  syncAccountSettings,
+} from "./settings.js";
 
 const LOCAL_HISTORY_PREFIX = "arcana_history_";
 
@@ -133,9 +138,17 @@ function authPage(mode) {
         body: JSON.stringify(body),
       });
       authUser = payload.user;
+      let syncError = null;
+      try {
+        await syncAccountSettings(authUser.id);
+      } catch (error) {
+        syncError = error;
+        console.warn("Arcana account settings sync failed", error);
+      }
       closeOverlay();
       updateAccountHeader();
       onAuthChange(authUser);
+      if (syncError) window.alert(`账号已登录，但用户信息和供应商同步失败：${syncError.message}`);
       await offerHistoryMigration();
     } catch (error) {
       feedback.textContent = error.message;
@@ -340,8 +353,8 @@ function updateAccountHeader() {
   const host = document.querySelector("#account-area");
   if (!host) return;
   host.innerHTML = authUser
-    ? `<button id="account-button" class="account-button is-logged-in" type="button" aria-haspopup="menu" aria-expanded="false"><span class="account-avatar" aria-hidden="true">${escapeHTML(authUser.nickname.slice(0, 1).toUpperCase())}</span><strong>${escapeHTML(authUser.nickname)}</strong><i aria-hidden="true">⌄</i></button><div class="account-menu" id="account-menu" role="menu" hidden><button type="button" data-account-action="history" role="menuitem">历史牌阵</button><button type="button" data-account-action="logout" role="menuitem">退出登录</button></div>`
-    : `<button id="account-button" class="account-button" type="button"><span class="account-avatar" aria-hidden="true"></span><strong>登录</strong></button>`;
+    ? `<button id="account-button" class="account-button is-logged-in" type="button" aria-haspopup="menu" aria-expanded="false"><strong>${escapeHTML(authUser.nickname)}</strong></button><div class="account-menu" id="account-menu" role="menu" hidden><button type="button" data-account-action="history" role="menuitem">历史牌阵</button><button type="button" data-account-action="logout" role="menuitem">退出登录</button></div>`
+    : `<button id="account-button" class="account-button" type="button"><strong>未登录</strong></button>`;
   const button = host.querySelector("#account-button");
   if (!authUser) {
     button.addEventListener("click", () => authPage("login"));
@@ -354,8 +367,10 @@ function updateAccountHeader() {
   });
   menu.querySelector('[data-account-action="history"]').addEventListener("click", openHistory);
   menu.querySelector('[data-account-action="logout"]').addEventListener("click", async () => {
+    await flushAccountSettings();
     await requestJSON("/api/logout", { method: "POST" }).catch(() => {});
     authUser = null;
+    disconnectAccountSettings();
     updateAccountHeader();
     onAuthChange(null);
   });
@@ -385,13 +400,18 @@ export function openCloudHistory() { return openHistory(); }
 
 export async function initializeAuth(callback = () => {}) {
   onAuthChange = callback;
-  document.addEventListener("arcana:account-host-ready", updateAccountHeader);
   document.addEventListener("arcana:open-cloud-history", openHistory);
   try {
     authUser = (await requestJSON("/api/me")).user;
+    try {
+      await syncAccountSettings(authUser.id);
+    } catch (error) {
+      console.warn("Arcana account settings sync failed", error);
+    }
   } catch (error) {
     if (error.status !== 401) console.warn("Arcana account check failed", error);
     authUser = null;
+    if (error.status === 401) disconnectAccountSettings();
   }
   updateAccountHeader();
   const initialHash = location.hash;
