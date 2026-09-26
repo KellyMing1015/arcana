@@ -354,8 +354,16 @@ class AccountTests(unittest.TestCase):
         self.assertEqual(registered.json["user"]["email"], "reader@example.com")
         with sqlite3.connect(website.app.config["DATABASE"]) as connection:
             password_hash = connection.execute("SELECT password_hash FROM users").fetchone()[0]
+            encrypted_settings = connection.execute("SELECT encrypted_data FROM account_settings").fetchone()[0]
         self.assertNotEqual(password_hash, "correct-password")
         self.assertTrue(password_hash.startswith("$2"))
+        self.assertNotIn("小欧", encrypted_settings)
+        account_data = self.client.get("/api/account-data").json
+        self.assertTrue(account_data["hasData"])
+        self.assertEqual(len(account_data["profiles"]), 1)
+        self.assertEqual(account_data["profiles"][0]["nickname"], "小欧")
+        self.assertTrue(account_data["profiles"][0]["isActive"])
+        self.assertEqual(account_data["profiles"][0]["age"], "")
         self.assertEqual(self.client.get("/api/me").status_code, 200)
         self.assertEqual(self.client.post("/api/logout").status_code, 200)
         self.assertEqual(self.client.get("/api/me").status_code, 401)
@@ -457,7 +465,8 @@ class AccountTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/account-data").status_code, 401)
         self.register()
         empty = self.client.get("/api/account-data")
-        self.assertFalse(empty.json["hasData"])
+        self.assertTrue(empty.json["hasData"])
+        self.assertEqual(empty.json["profiles"][0]["nickname"], "小欧")
         saved = self.client.put("/api/account-data", json=account_data)
         self.assertEqual(saved.status_code, 200)
 
@@ -474,8 +483,10 @@ class AccountTests(unittest.TestCase):
         self.client.post("/api/logout")
         self.register(email="other@example.com", nickname="另一个人")
         other = self.client.get("/api/account-data")
-        self.assertFalse(other.json["hasData"])
-        self.assertEqual(other.json["profiles"], [])
+        self.assertTrue(other.json["hasData"])
+        self.assertEqual(len(other.json["profiles"]), 1)
+        self.assertEqual(other.json["profiles"][0]["nickname"], "另一个人")
+        self.assertTrue(other.json["profiles"][0]["isActive"])
 
     def test_account_data_rejects_multiple_active_profiles(self):
         self.register()

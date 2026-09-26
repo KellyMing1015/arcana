@@ -115,6 +115,19 @@ function accountDataSnapshot() {
   };
 }
 
+function defaultProfile(nickname) {
+  return {
+    id: makeId(),
+    nickname: String(nickname || "").trim().slice(0, 80),
+    age: "",
+    gender: "",
+    zodiac: "",
+    currentStatus: "",
+    focusAreas: [],
+    isActive: true,
+  };
+}
+
 function applyAccountData(providerSettings, profiles) {
   localStorage.setItem(PROVIDER_STORAGE_KEY, JSON.stringify(providerSettings));
   localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profiles));
@@ -135,17 +148,28 @@ function queueCloudSave() {
   });
 }
 
-export async function syncAccountSettings(userId) {
+export async function syncAccountSettings(userId, nickname = "") {
   if (!userId) return;
   const accountId = String(userId);
+  const localSnapshot = accountDataSnapshot();
   const payload = await accountDataRequest("GET");
   const cachedOwner = localStorage.getItem(ACCOUNT_CACHE_USER_KEY);
   if (payload.hasData) {
-    applyAccountData(payload.providerSettings, payload.profiles);
+    const shouldCarryGuestProviders = !cachedOwner
+      && payload.providerSettings.providers.length === 0
+      && localSnapshot.providerSettings.providers.length > 0;
+    const providerSettings = shouldCarryGuestProviders
+      ? localSnapshot.providerSettings
+      : payload.providerSettings;
+    applyAccountData(providerSettings, payload.profiles);
+    if (shouldCarryGuestProviders) await accountDataRequest("PUT", accountDataSnapshot());
   } else if (!cachedOwner || cachedOwner === accountId) {
+    if (!localSnapshot.profiles.length && String(nickname || "").trim()) {
+      applyAccountData(localSnapshot.providerSettings, [defaultProfile(nickname)]);
+    }
     await accountDataRequest("PUT", accountDataSnapshot());
   } else {
-    applyAccountData({ providers: [], activeId: null }, []);
+    applyAccountData({ providers: [], activeId: null }, [defaultProfile(nickname)]);
     await accountDataRequest("PUT", accountDataSnapshot());
   }
   localStorage.setItem(ACCOUNT_CACHE_USER_KEY, accountId);

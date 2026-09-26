@@ -483,6 +483,24 @@ def register():
                 "INSERT INTO users (email, nickname, password_hash) VALUES (?, ?, ?)",
                 (email, nickname.strip(), password_hash),
             )
+            default_profile = {
+                "id": uuid.uuid4().hex,
+                "nickname": nickname.strip(),
+                "age": "",
+                "gender": "",
+                "zodiac": "",
+                "currentStatus": "",
+                "focusAreas": [],
+                "isActive": True,
+            }
+            account_data = {
+                "providerSettings": {"providers": [], "activeId": None},
+                "profiles": [default_profile],
+            }
+            connection.execute(
+                "INSERT INTO account_settings (user_id, encrypted_data) VALUES (?, ?)",
+                (cursor.lastrowid, encrypt_account_data(account_data)),
+            )
             user = connection.execute(
                 "SELECT id, email, nickname, created_at FROM users WHERE id = ?",
                 (cursor.lastrowid,),

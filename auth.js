@@ -140,7 +140,7 @@ function authPage(mode) {
       authUser = payload.user;
       let syncError = null;
       try {
-        await syncAccountSettings(authUser.id);
+        await syncAccountSettings(authUser.id, authUser.nickname);
       } catch (error) {
         syncError = error;
         console.warn("Arcana account settings sync failed", error);
@@ -404,7 +404,7 @@ export async function initializeAuth(callback = () => {}) {
   try {
     authUser = (await requestJSON("/api/me")).user;
     try {
-      await syncAccountSettings(authUser.id);
+      await syncAccountSettings(authUser.id, authUser.nickname);
     } catch (error) {
       console.warn("Arcana account settings sync failed", error);
     }
