@@ -478,7 +478,19 @@ function renderFan() {
     event.preventDefault();
     stopMotion();
     const now = performance.now();
-    gesture = { id: event.pointerId, startX: event.clientX, lastX: event.clientX, startOffset: fanOffset, lastTime: now, velocity: 0, moved: false };
+    const pressedCard = cardAtPoint(event.clientX, event.clientY, true);
+    gesture = {
+      id: event.pointerId,
+      pointerType: event.pointerType,
+      pressedCardId: pressedCard?.id || null,
+      startX: event.clientX,
+      startY: event.clientY,
+      lastX: event.clientX,
+      startOffset: fanOffset,
+      lastTime: now,
+      velocity: 0,
+      moved: false,
+    };
     area.setPointerCapture(event.pointerId);
     area.classList.add("is-dragging");
   });
@@ -486,7 +498,9 @@ function renderFan() {
     if (!gesture || gesture.id !== event.pointerId || state.isSelecting) return;
     const metrics = fanMetrics();
     const dx = event.clientX - gesture.startX;
-    if (!gesture.moved && Math.abs(dx) < 5) return;
+    const dy = event.clientY - gesture.startY;
+    const tapTolerance = gesture.pointerType === "touch" ? 14 : gesture.pointerType === "pen" ? 10 : 6;
+    if (!gesture.moved && Math.hypot(dx, dy) < tapTolerance) return;
     gesture.moved = true;
     setHover(null);
     const now = performance.now();
@@ -507,7 +521,10 @@ function renderFan() {
       beginCoast(completed.velocity);
       return;
     }
-    const card = cardAtPoint(event.clientX, event.clientY, true);
+    // 以按下时命中的牌为准，避免手指在松开时轻微偏移造成第二次点击失效。
+    const card = completed.pressedCardId
+      ? getRemaining().find((item) => item.id === completed.pressedCardId)
+      : cardAtPoint(event.clientX, event.clientY, true);
     if (!card) { setHover(null); return; }
     if (state.hoveredId === card.id) {
       selectCard(card);
@@ -603,10 +620,10 @@ function layoutFan(opening) {
 
 function cardAtPoint(clientX, clientY, preferHovered = false) {
   if (!fanZones.length) return null;
-  const { area, cx, cy } = fanMetrics();
+  const { area, cx } = fanMetrics();
   const bounds = area.getBoundingClientRect();
   const x = clientX - bounds.left - cx;
-  const y = clientY - bounds.top - cy;
+  const y = clientY - bounds.top;
   let topmost = null;
   let topmostOrder = -Infinity;
   for (const zone of fanZones) {
@@ -615,7 +632,8 @@ function cardAtPoint(clientX, clientY, preferHovered = false) {
     const dy = y - zone.y;
     const localX = dx * zone.rotationCos + dy * zone.rotationSin;
     const localY = -dx * zone.rotationSin + dy * zone.rotationCos;
-    const margin = 2;
+    // 已经凸起的牌扩大少量命中容差，边框和四角也能稳定响应触碰。
+    const margin = preferHovered && zone.card.id === state.hoveredId ? 12 : 3;
     if (Math.abs(localX) > zone.width * zone.scale / 2 + margin || Math.abs(localY) > zone.height * zone.scale / 2 + margin) continue;
     if (preferHovered && zone.card.id === state.hoveredId) return zone.card;
     // 多张牌的矩形会重叠；命中视觉层级最高的那张，才等于鼠标点到的可见边缘。

@@ -1460,7 +1460,11 @@ a:focus-visible,
   border-radius: 10px;
   box-shadow: 0 0 30px 12px rgba(235, 179, 199, .7);
 }
-.fan-card.is-hovered { filter: brightness(1.045); }
+.fan-card.is-hovered {
+  filter: brightness(1.045);
+  pointer-events: auto;
+  cursor: pointer;
+}
 .fan-heading,
 .fan-gap-info,
 .fan-center-mark { display: none !important; }
