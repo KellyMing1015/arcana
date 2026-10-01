@@ -435,6 +435,9 @@ button:focus-visible, textarea:focus-visible, a:focus-visible, [tabindex]:focus-
 .user-profile-actions button.is-delete { background: #c27c8b; }
 .user-profile-surface { position: relative; z-index: 1; min-height: 78px; padding: 14px 18px; background: linear-gradient(135deg, #fffaf2 0%, #f8eaf0 100%); display: flex; align-items: center; justify-content: space-between; gap: 22px; touch-action: pan-y; user-select: none; -webkit-user-select: none; transition: transform .25s cubic-bezier(.2,.8,.2,1); }
 .user-profile-row.is-open .user-profile-surface { transform: translateX(-140px); }
+/* 只剩最后一位用户时只有“编辑”一个按钮，滑开一半 */
+.user-profile-row.is-single-action .user-profile-actions { width: 70px; grid-template-columns: 1fr; }
+.user-profile-row.is-single-action.is-open .user-profile-surface { transform: translateX(-70px); }
 .user-profile-copy { min-width: 0; display: grid; gap: 7px; }
 .user-profile-copy strong { overflow: hidden; color: #31322e; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 .user-profile-copy small { overflow: hidden; color: #8a8b84; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }

@@ -386,13 +386,20 @@ function profileMeta(profile) {
   return values.length ? values.join(" · ") : "尚未填写更多信息";
 }
 
+// 现在一个账号对应一个人，不再添加新用户。
+// 旧账号里已有的多位用户可以删，但最后一位不能删，否则就没人了。
+function canDeleteProfile() {
+  return userProfiles.length > 1;
+}
+
 function userManager() {
   const active = userProfiles.find((profile) => profile.isActive);
+  const deletable = canDeleteProfile();
   const rows = userProfiles.length
-    ? userProfiles.map((profile) => `<div class="user-profile-row" data-profile-id="${escapeHTML(profile.id)}">
+    ? userProfiles.map((profile) => `<div class="user-profile-row${deletable ? "" : " is-single-action"}" data-profile-id="${escapeHTML(profile.id)}">
         <div class="user-profile-actions">
           <button type="button" tabindex="-1" data-profile-edit="${escapeHTML(profile.id)}">编辑</button>
-          <button class="is-delete" type="button" tabindex="-1" data-profile-delete="${escapeHTML(profile.id)}">删除</button>
+          ${deletable ? `<button class="is-delete" type="button" tabindex="-1" data-profile-delete="${escapeHTML(profile.id)}">删除</button>` : ""}
         </div>
         <div class="user-profile-surface">
           <span class="user-profile-copy"><strong>${escapeHTML(profile.nickname || "未命名用户")}</strong><small>${escapeHTML(profileMeta(profile))}</small></span>
@@ -405,8 +412,8 @@ function userManager() {
   return `<main class="user-manager">
     <div class="user-manager-heading"><span class="eyebrow">PERSONAL CONTEXT</span><h1>用户信息</h1><p>${active ? `当前解读使用：${escapeHTML(active.nickname || "未命名用户")}` : "当前未使用任何用户信息。打开某位用户右侧的开关即可启用。"}</p></div>
     <section class="user-profile-list" aria-label="用户列表">${rows}</section>
-    <p class="user-swipe-hint">向左滑动用户可编辑或删除；任何时候最多启用一位用户。</p>
-    <button id="add-user-profile" class="add-user-profile" type="button">＋ 添加用户</button>
+    <p class="user-swipe-hint">${deletable ? "向左滑动可编辑或删除；最后一位用户不能删除。" : "向左滑动可编辑你的信息。关掉右侧开关，这次解读就不会带上你的信息，也不会记进历史。"}</p>
+    ${userProfiles.length ? "" : "<button id=\"add-user-profile\" class=\"add-user-profile\" type=\"button\">＋ 填写我的信息</button>"}
     <p id="settings-feedback" class="settings-feedback" role="status" aria-live="polite"></p>
   </main>`;
 }
@@ -432,7 +439,7 @@ function userProfileEditor() {
       </div>
       <div class="settings-form-actions user-profile-form-actions">
         <button class="settings-save settings-save-plain" type="submit">保存</button>
-        ${editing ? "<button class=\"delete-user-profile\" id=\"delete-user-profile\" type=\"button\">删除该用户</button>" : ""}
+        ${editing && canDeleteProfile() ? "<button class=\"delete-user-profile\" id=\"delete-user-profile\" type=\"button\">删除该用户</button>" : ""}
       </div>
       <p id="settings-feedback" class="settings-feedback" role="status" aria-live="polite"></p>
     </form>
@@ -595,7 +602,8 @@ function bindHistoryTimeline(overlay) {
 }
 
 function bindUserManager(overlay) {
-  overlay.querySelector("#add-user-profile").addEventListener("click", () => {
+  // 只有一个用户都没有时才会出现这个按钮
+  overlay.querySelector("#add-user-profile")?.addEventListener("click", () => {
     editingUserId = null;
     activeSection = "profile-edit";
     renderSettings();
@@ -612,7 +620,7 @@ function bindUserManager(overlay) {
   }));
   overlay.querySelectorAll("[data-profile-delete]").forEach((button) => button.addEventListener("click", () => {
     const profile = userProfiles.find((item) => item.id === button.dataset.profileDelete);
-    if (!profile) return;
+    if (!profile || !canDeleteProfile()) return;
     if (persistProfiles(userProfiles.filter((item) => item.id !== profile.id))) renderSettings(`${profile.nickname || "该用户"}已删除。`);
   }));
   bindProfileSwipe(overlay);
@@ -628,6 +636,8 @@ function bindProfileSwipe(overlay) {
   };
   overlay.querySelectorAll(".user-profile-row").forEach((row) => {
     const surface = row.querySelector(".user-profile-surface");
+    // 只剩“编辑”一个按钮时，滑开的距离减半
+    const maxOffset = row.classList.contains("is-single-action") ? 70 : 140;
     let startX = 0;
     let startY = 0;
     let offset = 0;
@@ -637,7 +647,7 @@ function bindProfileSwipe(overlay) {
       if (openRow && openRow !== row) setRowOpen(openRow, false);
       startX = event.clientX;
       startY = event.clientY;
-      offset = row.classList.contains("is-open") ? -140 : 0;
+      offset = row.classList.contains("is-open") ? -maxOffset : 0;
       dragging = true;
       surface.setPointerCapture(event.pointerId);
     });
@@ -646,7 +656,7 @@ function bindProfileSwipe(overlay) {
       const dx = event.clientX - startX;
       const dy = event.clientY - startY;
       if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 8) { dragging = false; surface.style.transform = ""; return; }
-      const x = Math.max(-140, Math.min(0, offset + dx));
+      const x = Math.max(-maxOffset, Math.min(0, offset + dx));
       surface.style.transform = `translateX(${x}px)`;
     });
     const finish = (event) => {
@@ -692,7 +702,7 @@ function bindUserProfileEditor(overlay) {
   });
   overlay.querySelector("#delete-user-profile")?.addEventListener("click", () => {
     const profile = userProfiles.find((item) => item.id === editingUserId);
-    if (!profile) return;
+    if (!profile || !canDeleteProfile()) return;
     if (persistProfiles(userProfiles.filter((item) => item.id !== profile.id))) {
       editingUserId = null;
       activeSection = "profile-list";
