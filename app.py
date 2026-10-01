@@ -103,6 +103,15 @@ UI_FILES = {
     "dove-single-color.png",
 }
 DEV_ORIGINS = {"http://127.0.0.1:4173", "http://localhost:4173"}
+# 线上域名白名单。浏览器看到的是 https://arcana.ououm.com，
+# 但经过 Cloudflare(Flexible) 和 Nginx 转发后，Flask 自己以为是 http://，
+# 所以不能只靠 request.host_url 比对，要显式列出允许的来源。
+# 多个来源用英文逗号分隔，写在 .env 的 ARCANA_ALLOWED_ORIGINS 里。
+ALLOWED_ORIGINS = {
+    origin.strip().rstrip("/")
+    for origin in os.getenv("ARCANA_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+}
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 SPREAD_TYPES = {"单牌", "三牌阵", "凯尔特十字"}
 
@@ -191,7 +200,11 @@ def allowed_origin():
     origin = request.headers.get("Origin")
     if not origin:
         return True
-    return origin in DEV_ORIGINS or origin == request.host_url.rstrip("/")
+    return (
+        origin in DEV_ORIGINS
+        or origin in ALLOWED_ORIGINS
+        or origin == request.host_url.rstrip("/")
+    )
 
 
 @app.after_request
