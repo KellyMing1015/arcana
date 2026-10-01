@@ -314,6 +314,40 @@ class ReadingTests(unittest.TestCase):
         allowed = self.client.options("/api/reading", headers={"Origin": "http://localhost:4173"})
         self.assertEqual(allowed.headers["Access-Control-Allow-Origin"], "http://localhost:4173")
 
+    def test_cors_allows_configured_https_origin_behind_proxy(self):
+        # 模拟线上：浏览器是 https，Flask 收到的是 http（Cloudflare Flexible + Nginx）
+        origin = "https://arcana.ououm.com"
+        with patch.object(website, "ALLOWED_ORIGINS", {origin}):
+            allowed = self.client.options(
+                "/api/reading",
+                base_url="http://arcana.ououm.com",
+                headers={"Origin": origin},
+            )
+            self.assertEqual(allowed.headers.get("Access-Control-Allow-Origin"), origin)
+            # 白名单之外的来源仍然被拒
+            with patch.object(website, "open_chat_stream") as upstream:
+                denied = self.client.post(
+                    "/api/reading",
+                    json=self.payload,
+                    base_url="http://arcana.ououm.com",
+                    headers={"Origin": "https://evil.example"},
+                )
+            self.assertEqual(denied.status_code, 403)
+            upstream.assert_not_called()
+
+    def test_https_origin_rejected_without_config(self):
+        # 不配置白名单时，就是线上现在的 bug：https 来源对不上 http 的 host_url
+        with patch.object(website, "ALLOWED_ORIGINS", set()):
+            with patch.object(website, "open_chat_stream") as upstream:
+                denied = self.client.post(
+                    "/api/reading",
+                    json=self.payload,
+                    base_url="http://arcana.ououm.com",
+                    headers={"Origin": "https://arcana.ououm.com"},
+                )
+        self.assertEqual(denied.status_code, 403)
+        upstream.assert_not_called()
+
     def test_only_public_files_are_served(self):
         with self.client.get("/") as home:
             self.assertEqual(home.status_code, 200)
