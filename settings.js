@@ -5,7 +5,10 @@ const LEGACY_PROFILE_STORAGE_KEY = "arcana.user-info.v1";
 const HISTORY_STORAGE_PREFIX = "arcana_history_";
 const ACCOUNT_CACHE_USER_KEY = "arcana.account-cache-user.v1";
 const MAX_PROFILE_NOTES = 20;
-const MAX_PROFILE_NOTE_LENGTH = 50;
+const MAX_PROFILE_NOTE_LENGTH = 300;
+const MAX_PROFILE_NOTES_TOTAL_LENGTH = 3000;
+const MIN_PROFILE_NOTE_TOPIC_LENGTH = 2;
+const MAX_PROFILE_NOTE_TOPIC_LENGTH = 4;
 const ZODIACS = ["白羊座", "金牛座", "双子座", "巨蟹座", "狮子座", "处女座", "天秤座", "天蝎座", "射手座", "摩羯座", "水瓶座", "双鱼座"];
 
 function escapeHTML(value) {
@@ -484,6 +487,7 @@ function profileNotesPanel(profile) {
   return `<section class="profile-notes-panel${available ? "" : " is-unavailable"}" aria-label="塔罗师的便签" data-notes-profile="${available ? escapeHTML(profile.id) : ""}">
     <div class="profile-notes-heading"><h3>塔罗师的便签</h3><button type="button" class="profile-notes-clear" disabled>全部清空</button></div>
     <p class="profile-notes-description">${description}</p>
+    <small class="profile-notes-capacity" hidden></small>
     <div class="profile-notes-list"><p class="profile-notes-empty">${status}</p></div>
     <p class="profile-notes-feedback" role="status" aria-live="polite"></p>
   </section>`;
@@ -491,9 +495,21 @@ function profileNotesPanel(profile) {
 
 function profileNoteDate(value) {
   if (!value) return "";
-  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value) ? `${value.replace(" ", "T")}Z` : value;
+  const sqliteDate = typeof value === "string" && value.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?$/);
+  const normalized = sqliteDate
+    ? `${sqliteDate[1]}T${sqliteDate[2]}${sqliteDate[3] ? `.${sqliteDate[3].padEnd(3, "0").slice(0, 3)}` : ""}Z`
+    : value;
   const date = new Date(normalized);
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleString("zh-CN", { dateStyle: "medium", timeStyle: "short" });
+}
+
+function profileNoteTopic(note) {
+  const value = Array.from(String(note.topic || note.category || "").trim()).slice(0, MAX_PROFILE_NOTE_TOPIC_LENGTH).join("");
+  return Array.from(value).length >= MIN_PROFILE_NOTE_TOPIC_LENGTH ? value : "近况";
+}
+
+function profileNotesTextLength(notes) {
+  return notes.reduce((total, note) => total + Array.from(note.text).length, 0);
 }
 
 function bindProfileNotes(overlay) {
@@ -507,6 +523,7 @@ function bindProfileNotes(overlay) {
   const list = panel.querySelector(".profile-notes-list");
   const clearButton = panel.querySelector(".profile-notes-clear");
   const feedback = panel.querySelector(".profile-notes-feedback");
+  const capacity = panel.querySelector(".profile-notes-capacity");
   let notes = [];
   let busy = false;
   const isCurrent = () => version === profileNotesViewVersion
@@ -535,11 +552,14 @@ function bindProfileNotes(overlay) {
     list.innerHTML = notes.length ? notes.map((note) => {
       const updated = profileNoteDate(note.updated_at);
       return `<article class="profile-note" data-note-id="${escapeHTML(note.id)}">
+        <div class="profile-note-heading"><strong>${escapeHTML(profileNoteTopic(note))}</strong>${note.user_edited ? '<span class="profile-note-edited">你编辑过</span>' : ""}</div>
         <p class="profile-note-text">${escapeHTML(note.text)}</p>
         <small class="profile-note-date">${updated ? `最后更新于 ${escapeHTML(updated)}` : ""}</small>
         <div class="profile-note-actions"><button type="button" data-note-edit>编辑</button><button type="button" data-note-delete>删除</button></div>
       </article>`;
     }).join("") : `<p class="profile-notes-empty">还没有便签。慢慢聊，塔罗师会记下你愿意告诉她的事情。</p>`;
+    capacity.hidden = !notes.length;
+    capacity.textContent = `${notes.length} / ${MAX_PROFILE_NOTES} 条 · ${profileNotesTextLength(notes)} / ${MAX_PROFILE_NOTES_TOTAL_LENGTH} 字`;
     clearButton.disabled = !notes.length || busy;
     list.querySelectorAll(".profile-note").forEach((row) => {
       const note = notes.find((item) => String(item.id) === row.dataset.noteId);
@@ -558,7 +578,7 @@ function bindProfileNotes(overlay) {
   const mutateNote = async (url, method, body, message) => {
     if (busy || !isCurrent()) return;
     busy = true;
-    panel.querySelectorAll("button, textarea").forEach((element) => { element.disabled = true; });
+    panel.querySelectorAll("button, input, textarea").forEach((element) => { element.disabled = true; });
     setFeedback("正在保存…");
     try {
       await request(url, method, body);
@@ -570,7 +590,7 @@ function bindProfileNotes(overlay) {
     } finally {
       busy = false;
       if (isCurrent()) {
-        panel.querySelectorAll("button, textarea").forEach((element) => { element.disabled = false; });
+        panel.querySelectorAll("button, input, textarea").forEach((element) => { element.disabled = false; });
         clearButton.disabled = !notes.length;
       }
     }
@@ -578,19 +598,34 @@ function bindProfileNotes(overlay) {
   const editNote = (row, note) => {
     if (busy || !note || !isCurrent()) return;
     setFeedback();
-    row.innerHTML = `<label class="profile-note-editor"><span class="sr-only">编辑便签</span><textarea rows="2" maxlength="${MAX_PROFILE_NOTE_LENGTH * 2}">${escapeHTML(note.text)}</textarea></label>
-      <div class="profile-note-edit-footer"><small><span data-note-count>${Array.from(note.text).length}</span> / ${MAX_PROFILE_NOTE_LENGTH} 字</small><div class="profile-note-actions"><button type="button" data-note-cancel>取消</button><button class="profile-note-save" type="button" data-note-save>保存</button></div></div>`;
+    const topic = profileNoteTopic(note);
+    const otherNotesLength = profileNotesTextLength(notes.filter((item) => String(item.id) !== String(note.id)));
+    const availableLength = Math.max(0, Math.min(MAX_PROFILE_NOTE_LENGTH, MAX_PROFILE_NOTES_TOTAL_LENGTH - otherNotesLength));
+    row.innerHTML = `<label class="profile-note-topic-editor"><span>主题</span><input type="text" maxlength="${MAX_PROFILE_NOTE_TOPIC_LENGTH * 2}" value="${escapeHTML(topic)}" placeholder="2–4 个字"><small>2–4 个字</small></label>
+      <label class="profile-note-editor"><span class="sr-only">编辑便签正文</span><textarea rows="4" maxlength="${MAX_PROFILE_NOTE_LENGTH * 2}">${escapeHTML(note.text)}</textarea></label>
+      <div class="profile-note-edit-footer"><small><span data-note-count>${Array.from(note.text).length}</span> / ${availableLength} 字</small><div class="profile-note-actions"><button type="button" data-note-cancel>取消</button><button class="profile-note-save" type="button" data-note-save>保存</button></div></div>`;
     const input = row.querySelector("textarea");
-    input.addEventListener("input", () => {
-      input.value = Array.from(input.value).slice(0, MAX_PROFILE_NOTE_LENGTH).join("");
+    const topicInput = row.querySelector(".profile-note-topic-editor input");
+    const updateTextCount = (event) => {
+      if (event.isComposing) return;
+      input.value = Array.from(input.value).slice(0, availableLength).join("");
       row.querySelector("[data-note-count]").textContent = Array.from(input.value).length;
+    };
+    input.addEventListener("input", updateTextCount);
+    input.addEventListener("compositionend", updateTextCount);
+    topicInput.addEventListener("input", (event) => {
+      if (!event.isComposing) topicInput.value = Array.from(topicInput.value).slice(0, MAX_PROFILE_NOTE_TOPIC_LENGTH).join("");
     });
+    topicInput.addEventListener("compositionend", () => { topicInput.value = Array.from(topicInput.value).slice(0, MAX_PROFILE_NOTE_TOPIC_LENGTH).join(""); });
     row.querySelector("[data-note-cancel]").addEventListener("click", renderNotes);
     row.querySelector("[data-note-save]").addEventListener("click", () => {
       const text = Array.from(input.value.trim()).slice(0, MAX_PROFILE_NOTE_LENGTH).join("");
+      const editedTopic = Array.from(topicInput.value.trim()).slice(0, MAX_PROFILE_NOTE_TOPIC_LENGTH).join("");
+      if (Array.from(editedTopic).length < MIN_PROFILE_NOTE_TOPIC_LENGTH) { setFeedback("主题请写 2–4 个字，例如工作、感情或近况。", true); topicInput.focus(); return; }
       if (!text) { setFeedback("便签内容不能为空。想去掉这一条，可以点删除。", true); input.focus(); return; }
-      if (text === note.text) { renderNotes(); return; }
-      mutateNote(`/api/profile-notes/${encodeURIComponent(note.id)}`, "PATCH", { profile_id: profileId, text }, "便签已更新。");
+      if (otherNotesLength + Array.from(text).length > MAX_PROFILE_NOTES_TOTAL_LENGTH) { setFeedback("全部便签合计最多 3000 字，请先删减一些内容再保存。", true); input.focus(); return; }
+      if (text === note.text && editedTopic === topic) { renderNotes(); return; }
+      mutateNote(`/api/profile-notes/${encodeURIComponent(note.id)}`, "PATCH", { profile_id: profileId, topic: editedTopic, text }, "便签已更新。");
     });
     input.focus();
   };

@@ -2,6 +2,7 @@
 
 import base64
 import binascii
+import copy
 import hashlib
 import importlib.util
 import json
@@ -65,7 +66,7 @@ import profile_memory
 
 
 load_dotenv(ROOT / ".env")
-DATABASE_PATH = ROOT / "arcana.db"
+DATABASE_PATH = Path(os.getenv("ARCANA_DATABASE") or ROOT / "arcana.db")
 _BASE_PROMPT = (ROOT / "prompts" / "base.md").read_text(encoding="utf-8").strip()
 _READING_ONLY = (ROOT / "prompts" / "reading.md").read_text(encoding="utf-8").strip()
 _CONVERSATION_ONLY = (ROOT / "prompts" / "conversation.md").read_text(encoding="utf-8").strip()
@@ -194,6 +195,11 @@ SUMMARY_INSTRUCTION = (
     "直接告诉提问者该怎么做。必须使用完整句子并以句号结尾，输出前检查总结正文总字数，绝对不能在句子中间截断。"
     "【总结】只允许在全文最后出现一次，不能省略，也不能把完整解读复制成总结。"
 )
+FOLLOW_UP_HINT = (
+    "（程序提示：这是追问，不是新的解读。只回应我这一句，不要重新解读全部牌，"
+    "不要写【总结】或任何总结段落。）"
+)
+SUMMARY_MARKER = "【总结】"
 TIME_REASONING_RULE = (
     "时间规则：凡是涉及‘今天’‘现在’‘多久’‘几天’‘几周’‘几个月’‘最近’等时间判断，"
     "必须以第一行给出的东八区当前时间为唯一基准，先按日历精确计算，再回答；禁止凭感觉估算时间跨度。"
@@ -657,7 +663,9 @@ def manage_profile_note(user, note_id):
             if request.method == "DELETE":
                 profile_memory.delete_note(connection, user["id"], profile_id, note_id)
             else:
-                profile_memory.update_note(connection, user["id"], profile_id, note_id, payload.get("text"))
+                profile_memory.update_note(
+                    connection, user["id"], profile_id, note_id, payload.get("text"), payload.get("topic")
+                )
         return jsonify(success=True)
     except LookupError:
         return jsonify(error="没有找到这条便签。"), 404
@@ -937,6 +945,76 @@ def persist_profile_conversation(conversation_id, conversation):
     )
 
 
+def schedule_profile_conversation(conversation_id, conversation):
+    if not conversation.get("notes_enabled") or not conversation.get("notes_user_id") or not conversation.get("notes_profile_id"):
+        return
+    profile_memory_call(
+        profile_memory.schedule_session, app.config["DATABASE"], conversation["notes_user_id"],
+        conversation["notes_profile_id"], conversation_id,
+    )
+
+
+def without_summary(text):
+    """只清理发送/保存的追问副本，首次解读和历史总结保持原样。"""
+    body, marker, _summary = text.partition(SUMMARY_MARKER)
+    return body.rstrip() if marker else text
+
+
+def follow_up_history(original):
+    messages = copy.deepcopy(original)
+    first_user_seen = False
+    for item in messages:
+        if item.get("role") == "user" and not first_user_seen:
+            first_user_seen = True
+            content = item.get("content")
+            if isinstance(content, str) and content.endswith("\n" + SUMMARY_INSTRUCTION):
+                item["content"] = content[: -len("\n" + SUMMARY_INSTRUCTION)]
+        elif item.get("role") == "assistant" and first_user_seen:
+            if isinstance(item.get("content"), str):
+                item["content"] = without_summary(item["content"])
+            break
+    return messages
+
+
+def follow_up_content_with_hint(content):
+    """程序提示只发给模型，不修改用户发言，包括图片消息中的文字。"""
+    if isinstance(content, str):
+        return content + "\n" + FOLLOW_UP_HINT
+    hinted = copy.deepcopy(content)
+    for item in hinted:
+        if item.get("type") == "text":
+            item["text"] += "\n" + FOLLOW_UP_HINT
+            break
+    else:
+        hinted.insert(0, {"type": "text", "text": FOLLOW_UP_HINT})
+    return hinted
+
+
+def iter_follow_up_text(chunks):
+    """最多保留标记的三个字，避免跨流式分块的总结标记出现在页面。"""
+    pending = ""
+    for chunk in chunks:
+        pending += chunk
+        marker_at = pending.find(SUMMARY_MARKER)
+        if marker_at >= 0:
+            visible = pending[:marker_at]
+            if visible:
+                yield visible
+            return
+        # 仅延迟可能构成标记的末尾；正文无需等待整个模型回复。
+        hold = 0
+        for length in range(len(SUMMARY_MARKER) - 1, 0, -1):
+            if pending.endswith(SUMMARY_MARKER[:length]):
+                hold = length
+                break
+        visible = pending[:-hold] if hold else pending
+        if visible:
+            yield visible
+        pending = pending[-hold:] if hold else ""
+    if pending:
+        yield pending
+
+
 def profile_session_enabled(conversation_id):
     with database_connection() as connection:
         row = connection.execute(
@@ -1186,7 +1264,7 @@ def reading():
                 [{"role": "user", "content": question, "spoken_at": request_spoken_at}], 0,
             )
             profile_memory_call(
-                profile_memory.schedule_pending, app.config["DATABASE"], account_user["id"], profile_id, conversation_id
+                profile_memory.schedule_failed, app.config["DATABASE"], account_user["id"], profile_id
             )
             notes_prompt = profile_memory_call(load_user_notes_prompt, account_user["id"], profile_id, default="")
         elif account_user is not None:
@@ -1260,6 +1338,8 @@ def reading():
             if not completed:
                 with CONVERSATION_LOCK:
                     CONVERSATIONS.pop(conversation_id, None)
+            else:
+                schedule_profile_conversation(conversation_id, conversation)
 
     return Response(generate(), content_type="text/event-stream; charset=utf-8", headers={
         "Cache-Control": "no-cache, no-transform",
@@ -1321,7 +1401,7 @@ def follow_up():
                         profile_memory.disable_sessions(connection, session["notes_user_id"], [session["notes_profile_id"]])
                 profile_memory_call(disable_saved_session)
             next_round = session["rounds"] + 1
-            messages = [dict(item) for item in session["messages"]]
+            messages = follow_up_history(session["messages"])
             if messages and messages[0].get("role") == "system":
                 old_content = messages[0]["content"]
                 if session.get("notes_prompt"):
@@ -1343,13 +1423,13 @@ def follow_up():
                         "结束语要符合你的语气，不要使用标题或列表。"
                     ),
                 }
-            messages.append({"role": "user", "content": user_content})
+            messages.append({"role": "user", "content": follow_up_content_with_hint(user_content)})
             session["busy"] = True
             session["updated_at"] = time.time()
 
         try:
             upstream = open_chat_stream(messages, payload.get("provider"))
-            chunks = iter(iter_chat_text(upstream))
+            chunks = iter(iter_follow_up_text(iter_chat_text(upstream)))
             first = next(chunks, None)
         except Exception:
             reset_conversation_busy(conversation_id)
@@ -1373,7 +1453,7 @@ def follow_up():
             for text in chunks:
                 answer.append(text)
                 yield sse({"content": text})
-            response_text = "".join(answer)
+            response_text = without_summary("".join(answer)).rstrip()
             if not response_text:
                 yield sse({"error": "中转站没有返回回应，请检查所选模型。"})
                 return
@@ -1408,11 +1488,8 @@ def follow_up():
             upstream.close()
             if not completed:
                 reset_conversation_busy(conversation_id)
-            elif next_round >= MAX_FOLLOW_UPS and conversation.get("notes_enabled"):
-                profile_memory_call(
-                    profile_memory.schedule_pending, app.config["DATABASE"],
-                    conversation["notes_user_id"], conversation["notes_profile_id"], None, conversation_id,
-                )
+            else:
+                schedule_profile_conversation(conversation_id, conversation)
 
     return Response(generate_follow_up(), content_type="text/event-stream; charset=utf-8", headers={
         "Cache-Control": "no-cache, no-transform",

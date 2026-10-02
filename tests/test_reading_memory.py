@@ -15,6 +15,11 @@ import app as website
 class ReadingMemoryTests(unittest.TestCase):
     def setUp(self):
         website.CONVERSATIONS.clear()
+        # History-context tests must never launch a real configured notes model.
+        for name in ("schedule_session", "schedule_failed"):
+            scheduler = patch.object(website.profile_memory, name, return_value=False)
+            scheduler.start()
+            self.addCleanup(scheduler.stop)
         self.original_config = {
             key: website.app.config[key]
             for key in ("TESTING", "DATABASE", "SESSION_COOKIE_SECURE")
