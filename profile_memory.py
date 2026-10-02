@@ -15,8 +15,8 @@ from difflib import SequenceMatcher
 from llm import iter_chat_text, open_chat_stream
 
 
-MAX_NOTES = 8
-MAX_NOTE_LENGTH = 40
+MAX_NOTES = 20
+MAX_NOTE_LENGTH = 50
 MAX_ATTEMPTS = 2
 EXTRACT_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "profile_extract.md"
 logger = logging.getLogger(__name__)
@@ -136,7 +136,7 @@ def _note_row(connection, user_id, profile_id, note_id):
 
 def update_note(connection, user_id, profile_id, note_id, text):
     if not isinstance(text, str) or not text.strip() or len(text.strip()) > MAX_NOTE_LENGTH:
-        raise ValueError("便签需要填写 1 到 40 个字。")
+        raise ValueError(f"便签需要填写 1 到 {MAX_NOTE_LENGTH} 个字。")
     with connection:
         if not connection.in_transaction:
             connection.execute("BEGIN IMMEDIATE")

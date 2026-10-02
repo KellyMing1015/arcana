@@ -4,6 +4,8 @@ const PROFILE_STORAGE_KEY = "arcana.user-profiles.v2";
 const LEGACY_PROFILE_STORAGE_KEY = "arcana.user-info.v1";
 const HISTORY_STORAGE_PREFIX = "arcana_history_";
 const ACCOUNT_CACHE_USER_KEY = "arcana.account-cache-user.v1";
+const MAX_PROFILE_NOTES = 20;
+const MAX_PROFILE_NOTE_LENGTH = 50;
 const ZODIACS = ["白羊座", "金牛座", "双子座", "巨蟹座", "狮子座", "处女座", "天秤座", "天蝎座", "射手座", "摩羯座", "水瓶座", "双鱼座"];
 
 function escapeHTML(value) {
@@ -550,7 +552,7 @@ function bindProfileNotes(overlay) {
   const loadNotes = async () => {
     const payload = await request(`/api/profile-notes?profile_id=${encodeURIComponent(profileId)}`);
     if (!isCurrent()) return;
-    notes = Array.isArray(payload.notes) ? payload.notes.filter((note) => note && typeof note.text === "string" && note.id != null).slice(0, 8) : [];
+    notes = Array.isArray(payload.notes) ? payload.notes.filter((note) => note && typeof note.text === "string" && note.id != null).slice(0, MAX_PROFILE_NOTES) : [];
     renderNotes();
   };
   const mutateNote = async (url, method, body, message) => {
@@ -576,16 +578,16 @@ function bindProfileNotes(overlay) {
   const editNote = (row, note) => {
     if (busy || !note || !isCurrent()) return;
     setFeedback();
-    row.innerHTML = `<label class="profile-note-editor"><span class="sr-only">编辑便签</span><textarea rows="2" maxlength="80">${escapeHTML(note.text)}</textarea></label>
-      <div class="profile-note-edit-footer"><small><span data-note-count>${Array.from(note.text).length}</span> / 40 字</small><div class="profile-note-actions"><button type="button" data-note-cancel>取消</button><button class="profile-note-save" type="button" data-note-save>保存</button></div></div>`;
+    row.innerHTML = `<label class="profile-note-editor"><span class="sr-only">编辑便签</span><textarea rows="2" maxlength="${MAX_PROFILE_NOTE_LENGTH * 2}">${escapeHTML(note.text)}</textarea></label>
+      <div class="profile-note-edit-footer"><small><span data-note-count>${Array.from(note.text).length}</span> / ${MAX_PROFILE_NOTE_LENGTH} 字</small><div class="profile-note-actions"><button type="button" data-note-cancel>取消</button><button class="profile-note-save" type="button" data-note-save>保存</button></div></div>`;
     const input = row.querySelector("textarea");
     input.addEventListener("input", () => {
-      input.value = Array.from(input.value).slice(0, 40).join("");
+      input.value = Array.from(input.value).slice(0, MAX_PROFILE_NOTE_LENGTH).join("");
       row.querySelector("[data-note-count]").textContent = Array.from(input.value).length;
     });
     row.querySelector("[data-note-cancel]").addEventListener("click", renderNotes);
     row.querySelector("[data-note-save]").addEventListener("click", () => {
-      const text = Array.from(input.value.trim()).slice(0, 40).join("");
+      const text = Array.from(input.value.trim()).slice(0, MAX_PROFILE_NOTE_LENGTH).join("");
       if (!text) { setFeedback("便签内容不能为空。想去掉这一条，可以点删除。", true); input.focus(); return; }
       if (text === note.text) { renderNotes(); return; }
       mutateNote(`/api/profile-notes/${encodeURIComponent(note.id)}`, "PATCH", { profile_id: profileId, text }, "便签已更新。");

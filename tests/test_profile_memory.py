@@ -246,16 +246,27 @@ class ProfileMemoryTests(unittest.TestCase):
         }, ensure_ascii=False))
         self.assertEqual([note["text"] for note in self.notes()], ["你正在考虑换工作。"])
 
-    def test_model_output_is_limited_to_eight_notes_and_forty_characters(self):
+    def test_model_output_is_limited_to_twenty_notes_and_fifty_unicode_characters(self):
         self.save_dialogue()
+        candidates = [f"便签{index}" + "月🌙" * 40 for index in range(25)]
         self.process(json.dumps({
             "changed": True,
-            "add": [{"category": "工作", "text": f"便签{index}" + "内容" * 40} for index in range(12)],
+            "add": [{"category": "工作", "text": text} for text in candidates],
             "update": [], "remove": [],
         }, ensure_ascii=False))
         notes = self.notes()
-        self.assertLessEqual(len(notes), 8)
-        self.assertTrue(all(0 < len(note["text"]) <= 40 for note in notes))
+        self.assertEqual(len(notes), 20)
+        self.assertEqual([note["text"] for note in notes], [text[:50] for text in candidates[:20]])
+        self.assertTrue(all(len(note["text"]) == 50 for note in notes))
+
+    def test_model_updates_truncate_note_text_at_fifty_unicode_characters(self):
+        note_id = self.insert_note()
+        self.save_dialogue()
+        text = "你🌙" * 30
+        self.process(json.dumps({
+            "changed": True, "add": [], "update": [{"id": note_id, "text": text}], "remove": [],
+        }, ensure_ascii=False))
+        self.assertEqual(self.notes()[0]["text"], text[:50])
 
     def test_pending_session_persists_across_connections_and_extracts_only_once(self):
         self.save_dialogue()
@@ -624,6 +635,23 @@ class ProfileMemoryTests(unittest.TestCase):
             removed = {row[0] for row in connection.execute("SELECT text FROM profile_notes_removed WHERE user_id=1 AND profile_id='profile-ou'")}
         self.assertTrue({"你想听直接的建议。", "保留的另一条"} <= removed)
         self.assertNotIn("另一档案要保留", removed)
+
+    def test_http_edit_accepts_fifty_unicode_characters_and_rejects_fifty_one(self):
+        note_id = self.insert_note()
+        text = "🌙" * 25 + "你" * 25
+        self.assertEqual(len(text), 50)
+        accepted = self.client.patch(f"/api/profile-notes/{note_id}", json={
+            "profile_id": "profile-ou", "text": text,
+        })
+        self.assertEqual(accepted.status_code, 200, accepted.json)
+        saved = self.notes()
+        self.assertEqual(saved[0]["text"], text)
+        rejected = self.client.patch(f"/api/profile-notes/{note_id}", json={
+            "profile_id": "profile-ou", "text": text + "光",
+        })
+        self.assertEqual(rejected.status_code, 400, rejected.json)
+        self.assertIn("error", rejected.json)
+        self.assertEqual(self.notes(), saved)
 
     def test_account_cannot_follow_up_with_another_accounts_notes(self):
         self.insert_note()
