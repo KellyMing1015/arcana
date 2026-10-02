@@ -65,7 +65,11 @@ from llm import LLMError, friendly_error, iter_chat_text, list_models, open_chat
 
 load_dotenv(ROOT / ".env")
 DATABASE_PATH = ROOT / "arcana.db"
-SYSTEM_PROMPT = (ROOT / "prompts" / "system.md").read_text(encoding="utf-8").strip()
+_BASE_PROMPT = (ROOT / "prompts" / "base.md").read_text(encoding="utf-8").strip()
+_READING_ONLY = (ROOT / "prompts" / "reading.md").read_text(encoding="utf-8").strip()
+_CONVERSATION_ONLY = (ROOT / "prompts" / "conversation.md").read_text(encoding="utf-8").strip()
+SYSTEM_PROMPT = _BASE_PROMPT + "\n\n" + _READING_ONLY
+CONVERSATION_PROMPT = _BASE_PROMPT + "\n\n" + _CONVERSATION_ONLY
 POSITIONS = {
     1: ["此刻"],
     3: ["第1张", "第2张", "第3张"],
@@ -1099,7 +1103,9 @@ def follow_up():
             next_round = session["rounds"] + 1
             messages = [dict(item) for item in session["messages"]]
             if messages and messages[0].get("role") == "system":
-                messages[0] = {**messages[0], "content": prompt_with_current_time(messages[0]["content"])}
+                old_content = messages[0]["content"]
+                swapped = old_content.replace(_READING_ONLY, _CONVERSATION_ONLY, 1)
+                messages[0] = {**messages[0], "content": prompt_with_current_time(swapped)}
             if next_round == MAX_FOLLOW_UPS:
                 messages[0] = {
                     **messages[0],
