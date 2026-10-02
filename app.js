@@ -1002,6 +1002,7 @@ async function fetchFollowUp(message, images, output, signal, onFirstContent) {
       conversationId: state.conversationId,
       message,
       images,
+      userInfo: getUserInfo(),
       ...(provider ? { provider } : {}),
     }),
     signal,

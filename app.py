@@ -61,6 +61,7 @@ from flask import Flask, Response, jsonify, request, send_from_directory, sessio
 from flask_bcrypt import Bcrypt
 
 from llm import LLMError, friendly_error, iter_chat_text, list_models, open_chat_stream
+import profile_memory
 
 
 load_dotenv(ROOT / ".env")
@@ -182,6 +183,7 @@ def initialize_database():
             "CREATE INDEX IF NOT EXISTS idx_readings_user_profile_created "
             "ON readings(user_id, profile_id, created_at DESC, id DESC)"
         )
+        profile_memory.initialize_tables(connection)
 
 
 initialize_database()
@@ -601,7 +603,66 @@ def account_data(user):
             """,
             (user["id"], encrypted),
         )
+        active_profiles = {item["id"].strip() for item in normalized["profiles"] if item["isActive"]}
+        session_profiles = connection.execute(
+            "SELECT DISTINCT profile_id FROM profile_memory_sessions WHERE user_id = ?",
+            (user["id"],),
+        ).fetchall()
+        disabled_profiles = [row["profile_id"] for row in session_profiles if row["profile_id"] not in active_profiles]
+        profile_memory.disable_sessions(connection, user["id"], disabled_profiles)
+    with CONVERSATION_LOCK:
+        for conversation in CONVERSATIONS.values():
+            if conversation.get("notes_user_id") == user["id"] and conversation.get("notes_profile_id") not in active_profiles:
+                conversation["notes_enabled"] = False
     return jsonify(success=True)
+
+
+def notes_profile_id(value):
+    if not isinstance(value, str) or not value.strip() or len(value) > 100 or any(ord(char) < 32 for char in value):
+        raise ValueError("用户档案标识无效。")
+    return value.strip()
+
+
+@app.route("/api/profile-notes", methods=["GET", "DELETE", "OPTIONS"])
+@login_required
+def profile_notes(user):
+    if request.method == "OPTIONS":
+        return Response(status=204)
+    try:
+        payload = request.get_json(silent=True) if request.method == "DELETE" else None
+        profile_id = notes_profile_id(
+            payload.get("profile_id") if isinstance(payload, dict) else request.args.get("profile_id")
+        )
+        with database_connection() as connection:
+            if request.method == "DELETE":
+                profile_memory.clear_notes(connection, user["id"], profile_id)
+                return jsonify(success=True)
+            notes = profile_memory.get_notes(connection, user["id"], profile_id)
+        return jsonify(notes=notes, last_updated_at=max((note["updated_at"] for note in notes), default=None))
+    except ValueError as error:
+        return jsonify(error=str(error)), 400
+
+
+@app.route("/api/profile-notes/<int:note_id>", methods=["PATCH", "DELETE", "OPTIONS"])
+@login_required
+def manage_profile_note(user, note_id):
+    if request.method == "OPTIONS":
+        return Response(status=204)
+    try:
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            raise ValueError("便签格式不正确。")
+        profile_id = notes_profile_id(payload.get("profile_id"))
+        with database_connection() as connection:
+            if request.method == "DELETE":
+                profile_memory.delete_note(connection, user["id"], profile_id, note_id)
+            else:
+                profile_memory.update_note(connection, user["id"], profile_id, note_id, payload.get("text"))
+        return jsonify(success=True)
+    except LookupError:
+        return jsonify(error="没有找到这条便签。"), 404
+    except ValueError as error:
+        return jsonify(error=str(error)), 400
 
 
 @app.route("/api/logout", methods=["POST", "OPTIONS"])
@@ -833,6 +894,57 @@ def load_reading_memory(user_id, profile_id):
     )
 
 
+def profile_memory_call(function, *args, default=None):
+    """便签失败不能中断正常解读；日志不包含对白或密钥。"""
+    try:
+        return function(*args)
+    except Exception as error:
+        app.logger.warning("Profile memory unavailable: %s", type(error).__name__)
+        return default
+
+
+def load_user_notes_prompt(user_id, profile_id):
+    with database_connection() as connection:
+        notes = profile_memory.get_notes(connection, user_id, profile_id)
+    return profile_memory.build_notes_context(notes)
+
+
+def disable_profile_memory(user_id, profile_id=None):
+    with database_connection() as connection:
+        if profile_id is None:
+            rows = connection.execute(
+                "SELECT DISTINCT profile_id FROM profile_memory_sessions WHERE user_id = ?", (user_id,)
+            ).fetchall()
+            profile_ids = [row["profile_id"] for row in rows]
+        else:
+            profile_ids = [profile_id]
+        profile_memory.disable_sessions(connection, user_id, profile_ids)
+    with CONVERSATION_LOCK:
+        for conversation in CONVERSATIONS.values():
+            if conversation.get("notes_user_id") == user_id and (
+                profile_id is None or conversation.get("notes_profile_id") == profile_id
+            ):
+                conversation["notes_enabled"] = False
+
+
+def persist_profile_conversation(conversation_id, conversation):
+    if not conversation.get("notes_enabled") or not conversation.get("notes_user_id") or not conversation.get("notes_profile_id"):
+        return
+    profile_memory_call(
+        profile_memory.save_session, app.config["DATABASE"], conversation_id,
+        conversation["notes_user_id"], conversation["notes_profile_id"],
+        conversation["profile_dialogue"], conversation["rounds"],
+    )
+
+
+def profile_session_enabled(conversation_id):
+    with database_connection() as connection:
+        row = connection.execute(
+            "SELECT enabled FROM profile_memory_sessions WHERE id = ?", (conversation_id,)
+        ).fetchone()
+    return bool(row and row[0])
+
+
 def current_time_line(now=None):
     current = now or datetime.now(ZoneInfo("Asia/Shanghai"))
     if current.tzinfo is None:
@@ -1051,6 +1163,7 @@ def reading():
     try:
         payload = request.get_json(silent=True)
         question, spread, cards = validate_payload(payload)
+        request_spoken_at = time.time()
         raw_user_info = payload.get("userInfo")
         user_info = normalize_user_info(raw_user_info)
         record_history = payload.get("recordHistory", False)
@@ -1061,10 +1174,29 @@ def reading():
         record_history = record_history and account_user is not None and has_background
         messages = build_messages(question, spread, cards, user_info, include_summary=record_history)
         memory = ""
+        notes_prompt = ""
+        conversation_id = uuid.uuid4().hex
+        notes_enabled = bool(account_user is not None and user_info and user_info.get("id"))
+        profile_id = user_info["id"].strip() if notes_enabled else None
+        if notes_enabled:
+            # Reserve now so turning off personal info while text streams can cancel extraction.
+            profile_memory_call(
+                profile_memory.save_session, app.config["DATABASE"], conversation_id,
+                account_user["id"], profile_id,
+                [{"role": "user", "content": question, "spoken_at": request_spoken_at}], 0,
+            )
+            profile_memory_call(
+                profile_memory.schedule_pending, app.config["DATABASE"], account_user["id"], profile_id, conversation_id
+            )
+            notes_prompt = profile_memory_call(load_user_notes_prompt, account_user["id"], profile_id, default="")
+        elif account_user is not None:
+            profile_memory_call(disable_profile_memory, account_user["id"])
         if account_user is not None and user_info and user_info.get("id"):
             memory = load_reading_memory(account_user["id"], user_info["id"])
             if memory:
                 messages[0]["content"] += "\n\n" + memory
+        if notes_prompt:
+            messages[0]["content"] += "\n\n" + notes_prompt
         upstream = open_chat_stream(messages, payload.get("provider"))
         chunks = iter_reading_events(iter_chat_text(upstream), spread)
         try:
@@ -1075,7 +1207,6 @@ def reading():
         if first is None:
             upstream.close()
             raise LLMError("中转站没有返回解读文字，请检查所选模型。")
-        conversation_id = uuid.uuid4().hex
     except Exception as error:
         friendly = friendly_error(error)
         return jsonify(error=friendly.message), friendly.status_code
@@ -1097,14 +1228,27 @@ def reading():
                     answer.append(event["content"])
             if has_text:
                 with CONVERSATION_LOCK:
+                    session_notes_enabled = notes_enabled and profile_memory_call(
+                        profile_session_enabled, conversation_id, default=False
+                    )
                     CONVERSATIONS[conversation_id] = {
                         "messages": [*messages, {"role": "assistant", "content": "".join(answer)}],
                         "rounds": 0,
                         "busy": False,
                         "updated_at": time.time(),
-                        "memory_user_id": account_user["id"] if memory else None,
+                        "memory_user_id": account_user["id"] if memory or notes_enabled else None,
+                        "notes_enabled": session_notes_enabled,
+                        "notes_user_id": account_user["id"] if notes_enabled else None,
+                        "notes_profile_id": profile_id,
+                        "notes_prompt": notes_prompt,
+                        "profile_dialogue": [
+                            {"role": "user", "content": question, "spoken_at": request_spoken_at},
+                            {"role": "assistant", "content": "".join(answer)},
+                        ] if notes_enabled else [],
                     }
+                    conversation = dict(CONVERSATIONS[conversation_id])
                     cleanup_conversations()
+                persist_profile_conversation(conversation_id, conversation)
                 completed = True
                 yield sse({"done": True, "rounds": 0, "closed": False})
             else:
@@ -1139,11 +1283,13 @@ def follow_up():
         conversation_id = payload.get("conversationId")
         message = payload.get("message", "")
         images = normalize_follow_up_images(payload.get("images"))
+        supplied_user_info = normalize_user_info(payload.get("userInfo")) if "userInfo" in payload else None
         if not isinstance(conversation_id, str) or not re.fullmatch(r"[0-9a-f]{32}", conversation_id):
             raise LLMError("这次牌局已经失效，请重新抽牌。", 404)
         if not isinstance(message, str):
             raise LLMError("追问数据格式不正确。", 400)
         message = message.strip()
+        request_spoken_at = time.time()
         if not message and not images:
             raise LLMError("请输入你想继续问的内容，或上传一张图片。", 400)
         if len(message) > 2000:
@@ -1166,12 +1312,28 @@ def follow_up():
                 raise LLMError("塔罗师正在回答上一条追问，请稍等。", 409)
             if session["rounds"] >= MAX_FOLLOW_UPS:
                 raise LLMError("这次牌局已经完成八轮追问，请重新抽牌。", 409)
+            if "userInfo" in payload and session.get("notes_enabled") and (
+                not supplied_user_info or supplied_user_info.get("id", "").strip() != session.get("notes_profile_id")
+            ):
+                session["notes_enabled"] = False
+                def disable_saved_session():
+                    with database_connection() as connection:
+                        profile_memory.disable_sessions(connection, session["notes_user_id"], [session["notes_profile_id"]])
+                profile_memory_call(disable_saved_session)
             next_round = session["rounds"] + 1
             messages = [dict(item) for item in session["messages"]]
             if messages and messages[0].get("role") == "system":
                 old_content = messages[0]["content"]
+                if session.get("notes_prompt"):
+                    old_content = old_content.replace("\n\n" + session["notes_prompt"], "", 1)
                 swapped = old_content.replace(_READING_ONLY, _CONVERSATION_ONLY, 1)
                 messages[0] = {**messages[0], "content": prompt_with_current_time(swapped)}
+                if session.get("notes_enabled"):
+                    live_notes = profile_memory_call(
+                        load_user_notes_prompt, session["notes_user_id"], session["notes_profile_id"], default=""
+                    )
+                    if live_notes:
+                        messages[0]["content"] += "\n\n" + live_notes
             if next_round == MAX_FOLLOW_UPS:
                 messages[0] = {
                     **messages[0],
@@ -1228,9 +1390,16 @@ def follow_up():
                     session["rounds"] = next_round
                     session["busy"] = False
                     session["updated_at"] = time.time()
+                    if session.get("notes_enabled"):
+                        session["profile_dialogue"].extend([
+                            {"role": "user", "content": message, "spoken_at": request_spoken_at},
+                            {"role": "assistant", "content": response_text},
+                        ])
+                    conversation = dict(session)
             if session_missing:
                 yield sse({"error": "这次牌局已经失效，请重新抽牌。"})
                 return
+            persist_profile_conversation(conversation_id, conversation)
             completed = True
             yield sse({"done": True, "rounds": next_round, "closed": next_round >= MAX_FOLLOW_UPS})
         except Exception as error:
@@ -1239,6 +1408,11 @@ def follow_up():
             upstream.close()
             if not completed:
                 reset_conversation_busy(conversation_id)
+            elif next_round >= MAX_FOLLOW_UPS and conversation.get("notes_enabled"):
+                profile_memory_call(
+                    profile_memory.schedule_pending, app.config["DATABASE"],
+                    conversation["notes_user_id"], conversation["notes_profile_id"], None, conversation_id,
+                )
 
     return Response(generate_follow_up(), content_type="text/event-stream; charset=utf-8", headers={
         "Cache-Control": "no-cache, no-transform",
