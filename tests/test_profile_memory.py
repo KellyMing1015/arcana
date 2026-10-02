@@ -4,6 +4,7 @@ import copy
 import io
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -83,6 +84,14 @@ class ProfileMemoryTests(unittest.TestCase):
         with website.database_connection() as connection:
             return memory.get_notes(connection, user_id, profile_id)
 
+    def session_state(self, session_id="session-a"):
+        with website.database_connection() as connection:
+            row = connection.execute(
+                "SELECT extracted, status, attempts, extraction_outcome "
+                "FROM profile_memory_sessions WHERE id = ?", (session_id,),
+            ).fetchone()
+        return dict(row)
+
     def save_dialogue(self, session_id="session-a", *, user_id=1, profile_id="profile-ou", rounds=1, dialogue=None):
         if dialogue is None:
             dialogue = [
@@ -146,6 +155,40 @@ class ProfileMemoryTests(unittest.TestCase):
             self.assertTrue({"profile_notes", "profile_notes_removed", "profile_memory_sessions"} <= tables)
             columns = {row[1] for row in connection.execute("PRAGMA table_info(profile_memory_sessions)")}
             self.assertIn("extracted", columns)
+            self.assertIn("extraction_outcome", columns)
+
+    def test_existing_session_schema_is_migrated_without_losing_pending_dialogue(self):
+        legacy_path = os.path.join(self.directory.name, "legacy-profile-memory.db")
+        with sqlite3.connect(legacy_path) as connection:
+            connection.executescript("""
+                CREATE TABLE users (id INTEGER PRIMARY KEY);
+                INSERT INTO users(id) VALUES(1);
+                CREATE TABLE profile_memory_sessions (
+                    id TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    profile_id TEXT NOT NULL,
+                    dialogue TEXT NOT NULL,
+                    rounds INTEGER NOT NULL DEFAULT 0,
+                    extracted INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            dialogue = json.dumps([{ "role": "user", "content": "尚未提炼的原始问题" }])
+            connection.execute(
+                "INSERT INTO profile_memory_sessions(id,user_id,profile_id,dialogue,rounds) "
+                "VALUES(?,?,?,?,?)", ("legacy-pending", 1, "profile-ou", dialogue, 1),
+            )
+            memory.initialize_tables(connection)
+            memory.initialize_tables(connection)
+            row = connection.execute(
+                "SELECT dialogue, rounds, extracted, status, extraction_outcome "
+                "FROM profile_memory_sessions WHERE id='legacy-pending'"
+            ).fetchone()
+        self.assertEqual(row, (dialogue, 1, 0, "pending", ""))
 
     def test_notes_are_scoped_to_both_account_and_profile(self):
         self.insert_note("自己的工作便签")
@@ -157,23 +200,77 @@ class ProfileMemoryTests(unittest.TestCase):
         self.insert_note()
         before = self.notes()
         self.save_dialogue()
-        _, model = self.process(json.dumps({"changed": False}))
+        with patch.object(memory, "_extract_json", return_value=json.dumps({"changed": False})) as model:
+            memory.process_pending_sessions(self.database_path, 1, "profile-ou")
+            memory.process_pending_sessions(self.database_path, 1, "profile-ou")
         model.assert_called_once()
         self.assertEqual(self.notes(), before)
+        self.assertEqual(self.session_state(), {
+            "extracted": 1, "status": "done", "attempts": 1, "extraction_outcome": "unchanged",
+        })
 
     def test_only_valid_json_actions_can_modify_notes(self):
+        variants = (
+            ("", "invalid_json"),
+            ("not json", "invalid_json"),
+            ('```json\n{"changed": true, "add": []}\n```', "invalid_json"),
+            ('{"changed":true,"add":[', "invalid_json"),
+            ("[]", "invalid_schema"),
+            ('{"changed":"true","add":[{"text":"不能写入"}]}', "invalid_schema"),
+            ('{"changed":true,"add":"格式错误","update":[],"remove":[]}', "invalid_schema"),
+        )
+        for index, (output, outcome) in enumerate(variants):
+            with self.subTest(output=output):
+                # Isolated profiles prevent one earlier retryable failure from
+                # consuming the next variant's mocked model response.
+                profile_id = f"malformed-profile-{index}"
+                session_id = f"malformed-{index}"
+                self.insert_note(profile_id=profile_id)
+                before = self.notes(profile_id=profile_id)
+                self.save_dialogue(session_id, profile_id=profile_id)
+                _, model = self.process(output, profile_id=profile_id)
+                model.assert_called_once()
+                self.assertEqual(self.notes(profile_id=profile_id), before)
+                self.assertEqual(self.session_state(session_id), {
+                    "extracted": 0, "status": "failed", "attempts": 1, "extraction_outcome": outcome,
+                })
+                _, retried = self.process(json.dumps({
+                    "changed": True, "add": [{"category": "偏好", "text": "你想听直接一点的建议。"}],
+                    "update": [], "remove": [],
+                }), profile_id=profile_id)
+                retried.assert_called_once()
+                self.assertEqual(self.session_state(session_id), {
+                    "extracted": 1, "status": "done", "attempts": 2, "extraction_outcome": "changed",
+                })
+                self.assertEqual(self.notes(profile_id=profile_id)[0], before[0])
+                self.assertEqual(self.notes(profile_id=profile_id)[1]["text"], "你想听直接一点的建议。")
+
+    def test_invalid_model_output_retries_at_most_twice_without_storing_sensitive_diagnostics(self):
         self.insert_note()
         before = self.notes()
-        variants = (
-            "not json", '```json\n{"changed": true, "add": []}\n```',
-            "[]", '{"changed":"true","add":[{"text":"不能写入"}]}',
-            '{"changed":true,"add":"格式错误","update":[],"remove":[]}',
-        )
-        for index, output in enumerate(variants):
-            with self.subTest(output=output):
-                self.save_dialogue(f"malformed-{index}")
-                self.process(output)
-                self.assertEqual(self.notes(), before)
+        self.save_dialogue()
+        output = "用户的私密处境，不能进入诊断字段，也不是JSON。"
+        with patch.object(memory, "_extract_json", return_value=output) as model:
+            memory.process_pending_sessions(self.database_path, 1, "profile-ou")
+            memory.process_pending_sessions(self.database_path, 1, "profile-ou")
+            memory.process_pending_sessions(self.database_path, 1, "profile-ou")
+        self.assertEqual(model.call_count, 2)
+        self.assertEqual(self.notes(), before)
+        self.assertEqual(self.session_state(), {
+            "extracted": 0, "status": "failed", "attempts": 2, "extraction_outcome": "invalid_json",
+        })
+        self.assertNotIn(output, json.dumps(self.session_state(), ensure_ascii=False))
+
+    def test_valid_empty_actions_finish_as_no_effect_without_touching_notes(self):
+        self.insert_note()
+        before = self.notes()
+        self.save_dialogue()
+        _, model = self.process('{"changed":true,"add":[],"update":[],"remove":[]}')
+        model.assert_called_once()
+        self.assertEqual(self.notes(), before)
+        self.assertEqual(self.session_state(), {
+            "extracted": 1, "status": "done", "attempts": 1, "extraction_outcome": "no_effect",
+        })
 
     def test_a_single_question_without_follow_up_never_calls_the_extraction_model(self):
         self.save_dialogue(rounds=0, dialogue=[
@@ -394,6 +491,9 @@ class ProfileMemoryTests(unittest.TestCase):
         self.save_dialogue()
         self.process(None, side_effect=TimeoutError("fake model timeout"))
         self.assertEqual(self.notes(), before)
+        self.assertEqual(self.session_state(), {
+            "extracted": 0, "status": "failed", "attempts": 1, "extraction_outcome": "model_error",
+        })
 
     def test_disabling_profile_while_model_runs_prevents_new_notes(self):
         self.save_dialogue()

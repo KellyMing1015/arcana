@@ -56,6 +56,7 @@ def initialize_tables(connection):
             status TEXT NOT NULL DEFAULT 'pending',
             enabled INTEGER NOT NULL DEFAULT 1,
             attempts INTEGER NOT NULL DEFAULT 0,
+            extraction_outcome TEXT NOT NULL DEFAULT '',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -67,6 +68,11 @@ def initialize_tables(connection):
         CREATE INDEX IF NOT EXISTS idx_profile_sessions_scope
         ON profile_memory_sessions(user_id, profile_id, extracted, enabled, created_at);
     """)
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(profile_memory_sessions)")}
+    if "extraction_outcome" not in columns:
+        connection.execute(
+            "ALTER TABLE profile_memory_sessions ADD COLUMN extraction_outcome TEXT NOT NULL DEFAULT ''"
+        )
 
 
 def _connection(database_path):
@@ -382,7 +388,7 @@ def _extract_json(messages, provider):
         response.close()
 
 
-def _parse_changes(raw, notes):
+def _validate_changes(raw, notes):
     def object_without_duplicates(pairs):
         obj = {}
         for key, item in pairs:
@@ -394,36 +400,41 @@ def _parse_changes(raw, notes):
     try:
         value = json.loads(raw, object_pairs_hook=object_without_duplicates)
     except (ValueError, TypeError):
-        return None
+        return None, "invalid_json"
     if not isinstance(value, dict) or type(value.get("changed")) is not bool:
-        return None
+        return None, "invalid_schema"
     if value["changed"] is False:
-        return None
+        return None, "unchanged"
     if set(value) != {"changed", "add", "update", "remove"}:
-        return None
+        return None, "invalid_schema"
     if any(not isinstance(value[key], list) or len(value[key]) > 32 for key in ("add", "update", "remove")):
-        return None
+        return None, "invalid_schema"
     known = {note["id"] for note in notes}
     updated = set()
     removed = set()
     for item in value["add"]:
         if not isinstance(item, dict) or set(item) != {"category", "text"}:
-            return None
+            return None, "invalid_schema"
         if not isinstance(item["category"], str) or not isinstance(item["text"], str):
-            return None
+            return None, "invalid_schema"
     for item in value["update"]:
         if not isinstance(item, dict) or set(item) != {"id", "text"}:
-            return None
+            return None, "invalid_schema"
         if not isinstance(item["id"], str) or not isinstance(item["text"], str):
-            return None
+            return None, "invalid_schema"
         if item["id"] not in known or item["id"] in updated:
-            return None
+            return None, "invalid_schema"
         updated.add(item["id"])
     for note_id in value["remove"]:
         if not isinstance(note_id, str) or note_id not in known or note_id in removed or note_id in updated:
-            return None
+            return None, "invalid_schema"
         removed.add(note_id)
-    return value
+    return value, "changed"
+
+
+def _parse_changes(raw, notes):
+    # Keep the simple parser interface for callers; the worker also needs its safe outcome.
+    return _validate_changes(raw, notes)[0]
 
 
 def _comparable(text):
@@ -468,24 +479,27 @@ def _blocked_removed(text, removed, user_words):
 
 def _apply_changes(connection, user_id, profile_id, changes, notes, removed, user_words):
     if changes is None:
-        return
+        return 0
+    operations = 0
     current = {note["id"]: dict(note) for note in notes}
     for note_id in changes["remove"]:
-        connection.execute(
+        cursor = connection.execute(
             "DELETE FROM profile_notes WHERE id = ? AND user_id = ? AND profile_id = ?",
             (note_id, user_id, profile_id),
         )
+        operations += cursor.rowcount
         current.pop(note_id)
     for item in changes["update"]:
         text = item["text"].strip()[:MAX_NOTE_LENGTH]
         old = current[item["id"]]
         if not text or old["text"] == text or _blocked_removed(text, removed, user_words):
             continue
-        connection.execute(
+        cursor = connection.execute(
             "UPDATE profile_notes SET text = ?, updated_at = CURRENT_TIMESTAMP "
             "WHERE id = ? AND user_id = ? AND profile_id = ?",
             (text, item["id"], user_id, profile_id),
         )
+        operations += cursor.rowcount
         old["text"] = text
     for item in changes["add"]:
         text = item["text"].strip()[:MAX_NOTE_LENGTH]
@@ -500,6 +514,8 @@ def _apply_changes(connection, user_id, profile_id, changes, notes, removed, use
             (user_id, profile_id, item["category"].strip()[:40], text),
         )
         current[str(cursor.lastrowid)] = {"text": text}
+        operations += 1
+    return operations
 
 
 def _claim_session(connection, user_id, profile_id, exclude_session_id, cutoff_rowid):
@@ -569,6 +585,7 @@ def process_pending_sessions(database_path, user_id, profile_id, exclude_session
                 removed = _removed_records(connection, user_id, profile_id)
                 fingerprint = _fingerprint(notes, removed)
                 changes = None
+                outcome = "no_effect"
                 if len(user_words) > 1:
                     current_profile = [
                         {key: note[key] for key in ("id", "category", "text")}
@@ -581,10 +598,14 @@ def process_pending_sessions(database_path, user_id, profile_id, exclude_session
                         f"<session>\n{_safe_json(_session_input(dialogue))}\n</session>"
                     )
                     raw = _extract_json([
-                        {"role": "system", "content": EXTRACT_PROMPT_PATH.read_text(encoding="utf-8")},
+                        {"role": "system", "content": EXTRACT_PROMPT_PATH.read_text(encoding="utf-8") + (
+                            "\n\n程序输出要求：只输出一个合法 JSON 对象，不要解释，不要 Markdown 或代码围栏。"
+                            "changed 必须是布尔值；changed 为 true 时必须同时包含 add、update、remove 三个数组，"
+                            "没有操作的数组也要输出 []；便签 id 使用字符串。"
+                        )},
                         {"role": "user", "content": data},
                     ], provider)
-                    changes = _parse_changes(raw, notes)
+                    changes, outcome = _validate_changes(raw, notes)
 
                 # UI edits/deletions and turning off personal info win over any in-flight output.
                 connection.execute("BEGIN IMMEDIATE")
@@ -597,7 +618,8 @@ def process_pending_sessions(database_path, user_id, profile_id, exclude_session
                     # Another tab continued this conversation while the model was reading it.
                     # Preserve its new user words for the next scheduled extraction.
                     connection.execute(
-                        "UPDATE profile_memory_sessions SET status = 'pending', attempts = MAX(0, attempts - 1) "
+                        "UPDATE profile_memory_sessions SET status = 'pending', attempts = MAX(0, attempts - 1), "
+                        "extraction_outcome = 'stale_snapshot' "
                         "WHERE id = ?", (session["id"],),
                     )
                     connection.commit()
@@ -605,19 +627,38 @@ def process_pending_sessions(database_path, user_id, profile_id, exclude_session
                 if latest and latest[0] and not latest[1] and latest[2] == "processing":
                     if (latest[3] == session["dialogue"] and fingerprint == _fingerprint(
                             get_notes(connection, user_id, profile_id), _removed_records(connection, user_id, profile_id))):
-                        _apply_changes(connection, user_id, profile_id, changes, notes, removed, user_words)
+                        if outcome in {"invalid_json", "invalid_schema"}:
+                            connection.execute(
+                                "UPDATE profile_memory_sessions SET status = 'failed', extraction_outcome = ?, "
+                                "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND extracted = 0",
+                                (outcome, session["id"]),
+                            )
+                            connection.commit()
+                            logger.warning("Profile memory extraction rejected: %s", outcome)
+                            # Invalid output is retried on a later schedule, never in this loop.
+                            break
+                        operations = _apply_changes(
+                            connection, user_id, profile_id, changes, notes, removed, user_words,
+                        )
+                        if outcome == "changed" and not operations:
+                            outcome = "no_effect"
+                    else:
+                        outcome = "stale_snapshot"
+                elif latest and not latest[0]:
+                    outcome = "disabled"
                 if latest:
                     connection.execute(
                         "UPDATE profile_memory_sessions SET extracted = 1, status = 'done', "
-                        "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                        (session["id"],),
+                        "extraction_outcome = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (outcome, session["id"]),
                     )
                 connection.commit()
                 count += 1
             except Exception:
                 connection.rollback()
                 connection.execute(
-                    "UPDATE profile_memory_sessions SET status = 'failed', updated_at = CURRENT_TIMESTAMP "
+                    "UPDATE profile_memory_sessions SET status = 'failed', extraction_outcome = 'model_error', "
+                    "updated_at = CURRENT_TIMESTAMP "
                     "WHERE id = ? AND extracted = 0",
                     (session["id"],),
                 )
