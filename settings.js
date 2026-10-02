@@ -4,6 +4,11 @@ const PROFILE_STORAGE_KEY = "arcana.user-profiles.v2";
 const LEGACY_PROFILE_STORAGE_KEY = "arcana.user-info.v1";
 const HISTORY_STORAGE_PREFIX = "arcana_history_";
 const ACCOUNT_CACHE_USER_KEY = "arcana.account-cache-user.v1";
+const MAX_PROFILE_NOTES = 20;
+const MAX_PROFILE_NOTE_LENGTH = 300;
+const MAX_PROFILE_NOTES_TOTAL_LENGTH = 3000;
+const MIN_PROFILE_NOTE_TOPIC_LENGTH = 2;
+const MAX_PROFILE_NOTE_TOPIC_LENGTH = 4;
 const ZODIACS = ["白羊座", "金牛座", "双子座", "巨蟹座", "狮子座", "处女座", "天秤座", "天蝎座", "射手座", "摩羯座", "水瓶座", "双鱼座"];
 
 function escapeHTML(value) {
@@ -91,6 +96,15 @@ let pendingDeleteId = null;
 let onChange = () => {};
 let cloudAccountId = null;
 let cloudSaveChain = Promise.resolve();
+let accountSettingsSyncVersion = 0;
+let profileNotesViewVersion = 0;
+let profileNotesController = null;
+
+function cancelProfileNotesView() {
+  profileNotesViewVersion += 1;
+  profileNotesController?.abort();
+  profileNotesController = null;
+}
 
 async function accountDataRequest(method, body) {
   const response = await fetch("/api/account-data", {
@@ -140,8 +154,13 @@ function applyAccountData(providerSettings, profiles) {
 
 function queueCloudSave() {
   if (!cloudAccountId) return;
+  const accountId = cloudAccountId;
   const snapshot = accountDataSnapshot();
-  cloudSaveChain = cloudSaveChain.then(() => accountDataRequest("PUT", snapshot)).catch((error) => {
+  cloudSaveChain = cloudSaveChain.then(() => {
+    if (accountId !== cloudAccountId) return;
+    return accountDataRequest("PUT", snapshot);
+  }).catch((error) => {
+    if (accountId !== cloudAccountId) return;
     console.warn("Arcana account settings sync failed", error);
     showFeedback("已保存在本机，但云端同步失败，请稍后再试。", true);
   });
@@ -149,9 +168,13 @@ function queueCloudSave() {
 
 export async function syncAccountSettings(userId, nickname = "") {
   if (!userId) return;
+  const syncVersion = ++accountSettingsSyncVersion;
+  cancelProfileNotesView();
+  cloudAccountId = null;
   const accountId = String(userId);
   const localSnapshot = accountDataSnapshot();
   const payload = await accountDataRequest("GET");
+  if (syncVersion !== accountSettingsSyncVersion) return;
   const cachedOwner = localStorage.getItem(ACCOUNT_CACHE_USER_KEY);
   if (payload.hasData) {
     const shouldCarryGuestProviders = !cachedOwner
@@ -171,11 +194,15 @@ export async function syncAccountSettings(userId, nickname = "") {
     applyAccountData({ providers: [], activeId: null }, [defaultProfile(nickname)]);
     await accountDataRequest("PUT", accountDataSnapshot());
   }
+  if (syncVersion !== accountSettingsSyncVersion) return;
   localStorage.setItem(ACCOUNT_CACHE_USER_KEY, accountId);
   cloudAccountId = accountId;
+  if (document.querySelector("#provider-settings")) renderSettings();
 }
 
 export function disconnectAccountSettings() {
+  accountSettingsSyncVersion += 1;
+  cancelProfileNotesView();
   cloudAccountId = null;
   if (!localStorage.getItem(ACCOUNT_CACHE_USER_KEY)) return;
   localStorage.removeItem(ACCOUNT_CACHE_USER_KEY);
@@ -414,6 +441,7 @@ function userManager() {
     <section class="user-profile-list" aria-label="用户列表">${rows}</section>
     <p class="user-swipe-hint">${deletable ? "向左滑动可编辑或删除；最后一位用户不能删除。" : "向左滑动可编辑你的信息。关掉右侧开关，这次解读就不会带上你的信息，也不会记进历史。"}</p>
     ${userProfiles.length ? "" : "<button id=\"add-user-profile\" class=\"add-user-profile\" type=\"button\">＋ 填写我的信息</button>"}
+    ${profileNotesPanel(active)}
     <p id="settings-feedback" class="settings-feedback" role="status" aria-live="polite"></p>
   </main>`;
 }
@@ -443,8 +471,179 @@ function userProfileEditor() {
       </div>
       <p id="settings-feedback" class="settings-feedback" role="status" aria-live="polite"></p>
     </form>
+    ${profileNotesPanel(profile)}
     <p class="settings-storage-note">登录后会同步到你的 Arcana 账号。列表里未启用用户时，解读请求不会携带任何个人信息。</p>
   </section></main>`;
+}
+
+function profileNotesPanel(profile) {
+  const description = "塔罗师会从聊过的事情里，记下你亲口告诉她的近况。你可以随时修改或删除。";
+  let status = "正在读取便签…";
+  const enabled = Boolean(profile?.isActive);
+  const available = Boolean(enabled && cloudAccountId);
+  if (!profile) status = userProfiles.length ? "本次未启用个人信息，便签也不会被读取或整理。" : "保存并启用个人信息后，塔罗师的便签会出现在这里。";
+  else if (!enabled) status = "这位用户的个人信息已关闭，便签不会被读取或整理。";
+  else if (!cloudAccountId) status = "登录后，便签会保存在你的账号里，下次聊天也能用上。";
+  return `<section class="profile-notes-panel${available ? "" : " is-unavailable"}" aria-label="塔罗师的便签" data-notes-profile="${available ? escapeHTML(profile.id) : ""}">
+    <div class="profile-notes-heading"><h3>塔罗师的便签</h3><button type="button" class="profile-notes-clear" disabled>全部清空</button></div>
+    <p class="profile-notes-description">${description}</p>
+    <small class="profile-notes-capacity" hidden></small>
+    <div class="profile-notes-list"><p class="profile-notes-empty">${status}</p></div>
+    <p class="profile-notes-feedback" role="status" aria-live="polite"></p>
+  </section>`;
+}
+
+function profileNoteDate(value) {
+  if (!value) return "";
+  const sqliteDate = typeof value === "string" && value.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?$/);
+  const normalized = sqliteDate
+    ? `${sqliteDate[1]}T${sqliteDate[2]}${sqliteDate[3] ? `.${sqliteDate[3].padEnd(3, "0").slice(0, 3)}` : ""}Z`
+    : value;
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString("zh-CN", { dateStyle: "medium", timeStyle: "short" });
+}
+
+function profileNoteTopic(note) {
+  const value = Array.from(String(note.topic || note.category || "").trim()).slice(0, MAX_PROFILE_NOTE_TOPIC_LENGTH).join("");
+  return Array.from(value).length >= MIN_PROFILE_NOTE_TOPIC_LENGTH ? value : "近况";
+}
+
+function profileNotesTextLength(notes) {
+  return notes.reduce((total, note) => total + Array.from(note.text).length, 0);
+}
+
+function bindProfileNotes(overlay) {
+  const panel = overlay.querySelector(".profile-notes-panel");
+  const profileId = panel?.dataset.notesProfile;
+  if (!panel || !profileId || !cloudAccountId) return;
+  const version = profileNotesViewVersion;
+  const accountId = cloudAccountId;
+  const controller = new AbortController();
+  profileNotesController = controller;
+  const list = panel.querySelector(".profile-notes-list");
+  const clearButton = panel.querySelector(".profile-notes-clear");
+  const feedback = panel.querySelector(".profile-notes-feedback");
+  const capacity = panel.querySelector(".profile-notes-capacity");
+  let notes = [];
+  let busy = false;
+  const isCurrent = () => version === profileNotesViewVersion
+    && accountId === cloudAccountId
+    && panel.isConnected
+    && userProfiles.some((profile) => profile.id === profileId && profile.isActive);
+  const setFeedback = (message = "", error = false) => {
+    if (!isCurrent()) return;
+    feedback.textContent = message;
+    feedback.classList.toggle("is-error", error);
+  };
+  const request = async (url, method = "GET", body) => {
+    const response = await fetch(url, {
+      method,
+      credentials: "same-origin",
+      headers: body ? { "Content-Type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "便签暂时没有保存成功，请稍后重试。");
+    return payload;
+  };
+  const renderNotes = () => {
+    if (!isCurrent()) return;
+    list.innerHTML = notes.length ? notes.map((note) => {
+      const updated = profileNoteDate(note.updated_at);
+      return `<article class="profile-note" data-note-id="${escapeHTML(note.id)}">
+        <div class="profile-note-heading"><strong>${escapeHTML(profileNoteTopic(note))}</strong>${note.user_edited ? '<span class="profile-note-edited">你编辑过</span>' : ""}</div>
+        <p class="profile-note-text">${escapeHTML(note.text)}</p>
+        <small class="profile-note-date">${updated ? `最后更新于 ${escapeHTML(updated)}` : ""}</small>
+        <div class="profile-note-actions"><button type="button" data-note-edit>编辑</button><button type="button" data-note-delete>删除</button></div>
+      </article>`;
+    }).join("") : `<p class="profile-notes-empty">还没有便签。慢慢聊，塔罗师会记下你愿意告诉她的事情。</p>`;
+    capacity.hidden = !notes.length;
+    capacity.textContent = `${notes.length} / ${MAX_PROFILE_NOTES} 条 · ${profileNotesTextLength(notes)} / ${MAX_PROFILE_NOTES_TOTAL_LENGTH} 字`;
+    clearButton.disabled = !notes.length || busy;
+    list.querySelectorAll(".profile-note").forEach((row) => {
+      const note = notes.find((item) => String(item.id) === row.dataset.noteId);
+      row.querySelector("[data-note-edit]").addEventListener("click", () => editNote(row, note));
+      row.querySelector("[data-note-delete]").addEventListener("click", () => mutateNote(
+        `/api/profile-notes/${encodeURIComponent(note.id)}`, "DELETE", { profile_id: profileId }, "便签已删除，以后整理时会记得你的选择。",
+      ));
+    });
+  };
+  const loadNotes = async () => {
+    const payload = await request(`/api/profile-notes?profile_id=${encodeURIComponent(profileId)}`);
+    if (!isCurrent()) return;
+    notes = Array.isArray(payload.notes) ? payload.notes.filter((note) => note && typeof note.text === "string" && note.id != null).slice(0, MAX_PROFILE_NOTES) : [];
+    renderNotes();
+  };
+  const mutateNote = async (url, method, body, message) => {
+    if (busy || !isCurrent()) return;
+    busy = true;
+    panel.querySelectorAll("button, input, textarea").forEach((element) => { element.disabled = true; });
+    setFeedback("正在保存…");
+    try {
+      await request(url, method, body);
+      if (!isCurrent()) return;
+      await loadNotes();
+      setFeedback(message);
+    } catch (error) {
+      if (error.name !== "AbortError") setFeedback(error.message, true);
+    } finally {
+      busy = false;
+      if (isCurrent()) {
+        panel.querySelectorAll("button, input, textarea").forEach((element) => { element.disabled = false; });
+        clearButton.disabled = !notes.length;
+      }
+    }
+  };
+  const editNote = (row, note) => {
+    if (busy || !note || !isCurrent()) return;
+    setFeedback();
+    const topic = profileNoteTopic(note);
+    const otherNotesLength = profileNotesTextLength(notes.filter((item) => String(item.id) !== String(note.id)));
+    const availableLength = Math.max(0, Math.min(MAX_PROFILE_NOTE_LENGTH, MAX_PROFILE_NOTES_TOTAL_LENGTH - otherNotesLength));
+    row.innerHTML = `<label class="profile-note-topic-editor"><span>主题</span><input type="text" maxlength="${MAX_PROFILE_NOTE_TOPIC_LENGTH * 2}" value="${escapeHTML(topic)}" placeholder="2–4 个字"><small>2–4 个字</small></label>
+      <label class="profile-note-editor"><span class="sr-only">编辑便签正文</span><textarea rows="4" maxlength="${MAX_PROFILE_NOTE_LENGTH * 2}">${escapeHTML(note.text)}</textarea></label>
+      <div class="profile-note-edit-footer"><small><span data-note-count>${Array.from(note.text).length}</span> / ${availableLength} 字</small><div class="profile-note-actions"><button type="button" data-note-cancel>取消</button><button class="profile-note-save" type="button" data-note-save>保存</button></div></div>`;
+    const input = row.querySelector("textarea");
+    const topicInput = row.querySelector(".profile-note-topic-editor input");
+    const updateTextCount = (event) => {
+      if (event.isComposing) return;
+      input.value = Array.from(input.value).slice(0, availableLength).join("");
+      row.querySelector("[data-note-count]").textContent = Array.from(input.value).length;
+    };
+    input.addEventListener("input", updateTextCount);
+    input.addEventListener("compositionend", updateTextCount);
+    topicInput.addEventListener("input", (event) => {
+      if (!event.isComposing) topicInput.value = Array.from(topicInput.value).slice(0, MAX_PROFILE_NOTE_TOPIC_LENGTH).join("");
+    });
+    topicInput.addEventListener("compositionend", () => { topicInput.value = Array.from(topicInput.value).slice(0, MAX_PROFILE_NOTE_TOPIC_LENGTH).join(""); });
+    row.querySelector("[data-note-cancel]").addEventListener("click", renderNotes);
+    row.querySelector("[data-note-save]").addEventListener("click", () => {
+      const text = Array.from(input.value.trim()).slice(0, MAX_PROFILE_NOTE_LENGTH).join("");
+      const editedTopic = Array.from(topicInput.value.trim()).slice(0, MAX_PROFILE_NOTE_TOPIC_LENGTH).join("");
+      if (Array.from(editedTopic).length < MIN_PROFILE_NOTE_TOPIC_LENGTH) { setFeedback("主题请写 2–4 个字，例如工作、感情或近况。", true); topicInput.focus(); return; }
+      if (!text) { setFeedback("便签内容不能为空。想去掉这一条，可以点删除。", true); input.focus(); return; }
+      if (otherNotesLength + Array.from(text).length > MAX_PROFILE_NOTES_TOTAL_LENGTH) { setFeedback("全部便签合计最多 3000 字，请先删减一些内容再保存。", true); input.focus(); return; }
+      if (text === note.text && editedTopic === topic) { renderNotes(); return; }
+      mutateNote(`/api/profile-notes/${encodeURIComponent(note.id)}`, "PATCH", { profile_id: profileId, topic: editedTopic, text }, "便签已更新。");
+    });
+    input.focus();
+  };
+  clearButton.addEventListener("click", () => {
+    if (busy || !notes.length || !isCurrent()) return;
+    if (!window.confirm("清空这位用户的全部塔罗师便签？删除过的内容会被记住，除非你再次亲口提起，否则不会自动写回。")) return;
+    mutateNote("/api/profile-notes", "DELETE", { profile_id: profileId }, "全部便签已清空。");
+  });
+  (async () => {
+    try {
+      await cloudSaveChain;
+      if (isCurrent()) await loadNotes();
+    } catch (error) {
+      if (!isCurrent() || error.name === "AbortError") return;
+      list.innerHTML = `<p class="profile-notes-empty">便签暂时读取失败，请返回后重新打开。</p>`;
+      setFeedback(error.message, true);
+    }
+  })();
 }
 
 function settingsHome() {
@@ -513,6 +712,7 @@ function providerSidebar() {
 function renderSettings(message = "") {
   const overlay = document.querySelector("#provider-settings");
   if (!overlay) return;
+  cancelProfileNotesView();
   const home = activeSection === "home";
   let content = settingsHome();
   if (activeSection === "providers") content = `<div class="settings-layout">${providerSidebar()}<section class="settings-editor" aria-label="供应商配置">${providerEditor()}</section></div>`;
@@ -538,6 +738,7 @@ function renderSettings(message = "") {
   });
   if (activeSection === "profile-list") bindUserManager(overlay);
   if (activeSection === "profile-edit") bindUserProfileEditor(overlay);
+  if (["profile-list", "profile-edit"].includes(activeSection)) bindProfileNotes(overlay);
   if (activeSection === "providers") bindProviderEditor(overlay);
   if (activeSection === "history") {
     overlay.querySelector("#history-user-select")?.addEventListener("change", (event) => {
@@ -808,6 +1009,7 @@ function deleteProvider() {
 }
 
 function closeSettings() {
+  cancelProfileNotesView();
   document.querySelector("#provider-settings")?.remove();
   pendingDeleteId = null;
   editingUserId = null;

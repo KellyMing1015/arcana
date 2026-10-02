@@ -1,5 +1,6 @@
 """无需真实 API Key 的接口与中转协议检查。"""
 
+import copy
 import io
 import json
 import os
@@ -25,6 +26,11 @@ class ReadingTests(unittest.TestCase):
             SESSION_COOKIE_SECURE=False,
         )
         website.initialize_database()
+        # 普通接口测试不启动后台工作；实时调度测试会在自己的上下文中覆盖。
+        for name in ("schedule_session", "schedule_failed"):
+            scheduler = patch.object(website.profile_memory, name, return_value=False)
+            scheduler.start()
+            self.addCleanup(scheduler.stop)
         self.client = website.app.test_client()
         self.payload = {
             "question": "我该如何看待这段关系？",
@@ -217,7 +223,8 @@ class ReadingTests(unittest.TestCase):
         history = calls[1][0]
         self.assertEqual([item["role"] for item in history], ["system", "user", "assistant", "user"])
         self.assertEqual(history[-2]["content"], "initial reading")
-        self.assertEqual(history[-1]["content"], "那我接下来先做什么？")
+        self.assertEqual(history[-1]["content"], "那我接下来先做什么？\n" + website.FOLLOW_UP_HINT)
+        self.assertEqual(website.CONVERSATIONS[conversation_id]["messages"][-2]["content"], "那我接下来先做什么？")
 
     def test_follow_up_accepts_local_images_as_multimodal_content(self):
         conversation_id = "c" * 32
@@ -239,8 +246,135 @@ class ReadingTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(captured[0]["content"].startswith("当前时间："))
         content = captured[-1]["content"]
-        self.assertEqual(content[0], {"type": "text", "text": "看看这张图"})
+        self.assertEqual(content[0], {"type": "text", "text": "看看这张图\n" + website.FOLLOW_UP_HINT})
         self.assertEqual(content[1], {"type": "image_url", "image_url": {"url": image}})
+        stored_content = website.CONVERSATIONS[conversation_id]["messages"][-2]["content"]
+        self.assertEqual(stored_content[0], {"type": "text", "text": "看看这张图"})
+
+    def test_follow_up_removes_initial_summary_only_in_the_model_copy(self):
+        conversation_id = "e" * 32
+        initial = [
+            {"role": "system", "content": website.SYSTEM_PROMPT},
+            {"role": "user", "content": "最初的问题\n" + website.SUMMARY_INSTRUCTION},
+            {"role": "assistant", "content": "完整解读。\n【总结】历史独立总结。"},
+        ]
+        website.CONVERSATIONS[conversation_id] = {
+            "messages": copy.deepcopy(initial), "rounds": 0,
+            "busy": False, "updated_at": website.time.time(),
+        }
+        self.client.post("/api/register", json={
+            "email": "summary-history@example.com", "nickname": "测试用户", "password": "password123",
+        })
+        saved = self.client.post("/api/readings", json={
+            "question": "最初的问题", "spread_type": "三牌阵", "cards": self.payload["cards"],
+            "summary": "历史独立总结。", "full_reading": initial[2]["content"],
+            "profile_id": "summary-profile", "profile_nickname": "测试用户",
+        })
+        self.assertEqual(saved.status_code, 201)
+        previous_records = self.client.get("/api/readings").json
+        captured = []
+
+        def fake_upstream(messages, _provider):
+            captured.extend(copy.deepcopy(messages))
+            return io.BytesIO(b'data: {"choices":[{"delta":{"content":"answer"}}]}\n\ndata: [DONE]\n\n')
+
+        with patch.object(website, "open_chat_stream", side_effect=fake_upstream):
+            response = self.client.post("/api/follow-up", json={
+                "conversationId": conversation_id, "message": "这一句才是追问内容",
+            }, buffered=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(captured[1]["content"], "最初的问题")
+        self.assertEqual(captured[2]["content"], "完整解读。")
+        self.assertNotIn(website.SUMMARY_INSTRUCTION, json.dumps(captured, ensure_ascii=False))
+        self.assertNotIn("【总结】", captured[2]["content"])
+        self.assertEqual(captured[-1]["content"], "这一句才是追问内容\n" + website.FOLLOW_UP_HINT)
+        stored = website.CONVERSATIONS[conversation_id]["messages"]
+        self.assertEqual(stored[:3], initial)
+        self.assertEqual(stored[-2]["content"], "这一句才是追问内容")
+        self.assertNotIn(website.FOLLOW_UP_HINT, json.dumps(stored, ensure_ascii=False))
+        self.assertEqual(self.client.get("/api/readings").json, previous_records)
+
+    def test_follow_up_summary_is_not_streamed_or_stored_across_chunk_boundaries(self):
+        conversation_id = "f" * 32
+        website.CONVERSATIONS[conversation_id] = {
+            "messages": [{"role": "system", "content": website.SYSTEM_PROMPT}],
+            "rounds": 0, "busy": False, "updated_at": website.time.time(),
+        }
+        texts = ["直白回应。\n【", "总", "结", "】不应该出现的内容", "后续也不能出现"]
+        stream = io.BytesIO(("".join(
+            "data: " + json.dumps({"choices": [{"delta": {"content": text}}]}, ensure_ascii=False) + "\n\n"
+            for text in texts
+        ) + "data: [DONE]\n\n").encode("utf-8"))
+        with patch.object(website, "open_chat_stream", return_value=stream):
+            response = self.client.post("/api/follow-up", json={
+                "conversationId": conversation_id, "message": "那你建议我接下来怎么办",
+            }, buffered=True)
+        events = [json.loads(line[6:]) for line in response.get_data(as_text=True).splitlines() if line.startswith("data: ")]
+        self.assertEqual("".join(event.get("content", "") for event in events), "直白回应。\n")
+        self.assertTrue(events[-1]["done"])
+        self.assertEqual(website.CONVERSATIONS[conversation_id]["messages"][-1]["content"], "直白回应。")
+
+    def test_summary_stream_filter_preserves_plain_text_and_incomplete_marker(self):
+        for split in range(1, len(website.SUMMARY_MARKER)):
+            with self.subTest(split=split):
+                result = list(website.iter_follow_up_text([
+                    "回应" + website.SUMMARY_MARKER[:split], website.SUMMARY_MARKER[split:] + "总结",
+                ]))
+                self.assertEqual("".join(result), "回应")
+        self.assertEqual("".join(website.iter_follow_up_text(["开场【", "普通括号内容】", "结尾【总"])), "开场【普通括号内容】结尾【总")
+
+    def test_every_completed_response_schedules_memory_without_waiting_for_eighth_round(self):
+        self.client.post("/api/register", json={
+            "email": "realtime@example.com", "nickname": "测试用户", "password": "password123",
+        })
+        user_info = {"enabled": True, "id": "realtime-profile", "nickname": "测试用户"}
+
+        def fake_upstream(_messages, _provider):
+            return io.BytesIO(b'data: {"choices":[{"delta":{"content":"response"}}]}\n\ndata: [DONE]\n\n')
+
+        with patch.object(website, "open_chat_stream", side_effect=fake_upstream), \
+                patch.object(website.profile_memory, "schedule_session") as schedule, \
+                patch.object(website.profile_memory, "schedule_failed") as retry_failed:
+            reading = self.client.post("/api/reading", json={
+                **self.payload, "userInfo": user_info,
+            }, buffered=True)
+            events = [json.loads(line[6:]) for line in reading.get_data(as_text=True).splitlines() if line.startswith("data: ")]
+            conversation_id = events[0]["conversationId"]
+            self.assertEqual(schedule.call_count, 1)
+            retry_failed.assert_called_once_with(website.app.config["DATABASE"], 1, "realtime-profile")
+            for round_number in (1, 2):
+                response = self.client.post("/api/follow-up", json={
+                    "conversationId": conversation_id, "message": "我准备转行做产品了", "userInfo": user_info,
+                }, buffered=True)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(schedule.call_count, round_number + 1)
+            schedule.assert_called_with(website.app.config["DATABASE"], 1, "realtime-profile", conversation_id)
+            retry_failed.assert_called_once()
+        with website.database_connection() as connection:
+            persisted = connection.execute("SELECT dialogue FROM profile_memory_sessions WHERE id = ?", (conversation_id,)).fetchone()
+        self.assertNotIn(website.FOLLOW_UP_HINT, persisted["dialogue"])
+
+    def test_disabled_user_info_never_schedules_memory_for_reading_or_follow_up(self):
+        self.client.post("/api/register", json={
+            "email": "disabled-memory@example.com", "nickname": "测试用户", "password": "password123",
+        })
+
+        def fake_upstream(_messages, _provider):
+            return io.BytesIO(b'data: {"choices":[{"delta":{"content":"response"}}]}\n\ndata: [DONE]\n\n')
+
+        with patch.object(website, "open_chat_stream", side_effect=fake_upstream), \
+                patch.object(website.profile_memory, "schedule_session") as schedule, \
+                patch.object(website.profile_memory, "schedule_failed") as retry_failed:
+            reading = self.client.post("/api/reading", json={
+                **self.payload, "userInfo": {"enabled": False, "id": "inactive-profile"},
+            }, buffered=True)
+            events = [json.loads(line[6:]) for line in reading.get_data(as_text=True).splitlines() if line.startswith("data: ")]
+            response = self.client.post("/api/follow-up", json={
+                "conversationId": events[0]["conversationId"], "message": "我准备转行做产品了",
+            }, buffered=True)
+            self.assertEqual(response.status_code, 200)
+            schedule.assert_not_called()
+            retry_failed.assert_not_called()
 
     def test_follow_up_rejects_more_than_three_images(self):
         conversation_id = "d" * 32
