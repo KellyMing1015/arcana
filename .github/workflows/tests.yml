@@ -12,7 +12,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      ARCANA_DATABASE: ${{ runner.temp }}/arcana-test-bootstrap.db
       ARCANA_MEMORY_MODEL_BASE_URL: ""
       ARCANA_MEMORY_MODEL_API_KEY: ""
       ARCANA_MEMORY_MODEL: ""
@@ -29,6 +28,8 @@ jobs:
       - name: Install runtime dependencies
         run: python -m pip install -r requirements.txt
       - name: Check backend and isolated data flows
+        env:
+          ARCANA_DATABASE: ${{ runner.temp }}/arcana-test-bootstrap.db
         run: python -m unittest discover -s tests -v
       - name: Check frontend slow image loads and retry limits
         run: node --test tests/test_frontend_reliability.mjs
