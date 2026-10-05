@@ -125,9 +125,29 @@ class ProfileMemoryTests(unittest.TestCase):
         note_id = self.insert_note()
         website.initialize_database()
         with website.database_connection() as c:
-            self.assertTrue({"topic", "user_edited"} <= {r[1] for r in c.execute("PRAGMA table_info(profile_notes)")})
+            self.assertTrue({"topic", "user_edited", "edited_at"} <= {r[1] for r in c.execute("PRAGMA table_info(profile_notes)")})
             self.assertTrue({"revision", "extracted_revision"} <= {r[1] for r in c.execute("PRAGMA table_info(profile_memory_sessions)")})
         self.assertEqual(self.notes()[0]["id"], note_id)
+
+    def test_edit_timestamp_migration_preserves_current_notes_and_stays_stable(self):
+        path = os.path.join(self.directory.name, "before-edit-time.db")
+        with sqlite3.connect(path) as c:
+            c.executescript("""
+                CREATE TABLE users(id INTEGER PRIMARY KEY);
+                INSERT INTO users VALUES(1);
+                CREATE TABLE profile_notes(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,
+                    profile_id TEXT NOT NULL,category TEXT NOT NULL DEFAULT '',topic TEXT NOT NULL DEFAULT '',
+                    text TEXT NOT NULL,user_edited INTEGER NOT NULL DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+                INSERT INTO profile_notes(user_id,profile_id,topic,text,user_edited,updated_at)
+                    VALUES(1,'current','转行','你正在转行。',1,'2026-01-01 00:00:00');
+            """)
+            memory.initialize_tables(c)
+            row = c.execute("SELECT text,edited_at FROM profile_notes").fetchone()
+            self.assertEqual(row, ("你正在转行。", "2026-01-01 00:00:00"))
+            c.execute("UPDATE profile_notes SET updated_at='2026-02-01 00:00:00'")
+            memory.initialize_tables(c)
+            self.assertEqual(c.execute("SELECT edited_at FROM profile_notes").fetchone()[0], "2026-01-01 00:00:00")
 
     def test_legacy_notes_clear_once_preserving_users_readings_and_dialogue(self):
         with sqlite3.connect(os.path.join(self.directory.name, "legacy.db")) as c:
@@ -335,6 +355,206 @@ class ProfileMemoryTests(unittest.TestCase):
         self.assertEqual(self.notes()[0]["text"], original + "离职日期定在十月底。")
         self.assertTrue(self.notes()[0]["user_edited"])
 
+    def test_manual_edit_does_not_block_new_fact_as_a_deleted_old_note(self):
+        note_id = self.insert_note("你正在准备转行做产品。")
+        with website.database_connection() as c:
+            memory.update_note(c, 1, "profile-ou", note_id, "你正在准备转行做产品，仍在职。")
+        original = self.notes()[0]["text"]
+        self.save(dialogue=[{"role": "user", "content": "已开始整理作品。"},
+                            {"role": "assistant", "content": "继续准备。"}])
+        self.process(self.output([{"topic": "转行", "text": original + "已开始整理作品。"}]))
+        after = self.notes()[0]
+        self.assertEqual(after["id"], note_id)
+        self.assertEqual(after["text"], original + "已开始整理作品。")
+        self.assertTrue(after["user_edited"])
+        self.assertEqual(self.state()["extraction_outcome"], "changed")
+
+    def test_edited_note_accepts_summarized_append_with_new_user_quote(self):
+        original = "你在转行，还没有离职。"
+        self.insert_note(original, edited=True)
+        statement = "我的离职日期已经定在十月底了，接下来两周要交接。"
+        self.save(dialogue=[{"role": "user", "content": statement},
+                            {"role": "assistant", "content": "准备交接。"}])
+        combined = original + "你计划十月底离职，接下来两周交接。"
+        self.process(self.output([{"topic": "转行", "text": combined, "evidence": [statement]}]))
+        self.assertEqual(self.notes()[0]["text"], combined)
+        self.assertTrue(self.notes()[0]["user_edited"])
+        self.assertNotIn("evidence", self.notes()[0])
+
+    def test_edited_append_rejects_quote_not_spoken_by_user(self):
+        self.insert_note(edited=True)
+        before = self.notes()
+        self.save()
+        self.process(self.output([{"topic": "转行", "text": before[0]["text"] + "你已拿到新offer。",
+                                   "evidence": ["我已拿到新offer。"]}]))
+        self.assertEqual(self.notes(), before)
+        self.assertEqual(self.state()["status"], "failed")
+        self.assertEqual(self.state()["extraction_outcome"], "protected_content")
+
+    def test_edited_append_rejects_quote_from_before_manual_edit(self):
+        note_id = self.insert_note()
+        statement = "我的离职日期已经定在十月底了。"
+        self.save(dialogue=[{"role": "user", "content": statement},
+                            {"role": "assistant", "content": "准备交接。"}])
+        with website.database_connection() as c:
+            memory.update_note(c, 1, "profile-ou", note_id, "你正在转行，但还在职。")
+        before = self.notes()
+        self.process(self.output([{"topic": "转行", "text": before[0]["text"] + "你十月底离职。",
+                                   "evidence": [statement]}]))
+        self.assertEqual(self.notes(), before)
+        self.assertEqual(self.state()["extracted"], 0)
+
+    def test_edited_append_does_not_restore_separately_deleted_fact(self):
+        original = "你正在转行。"
+        self.insert_note(original, edited=True)
+        deleted = self.insert_note("你在准备英语考试。", topic="备考")
+        self.save(dialogue=[{"role": "user", "content": "我在准备英语考试。"},
+                            {"role": "assistant", "content": "加油。"}])
+        with website.database_connection() as c:
+            memory.delete_note(c, 1, "profile-ou", deleted)
+        self.process(self.output([{"topic": "转行", "text": original + "你在准备英语考试。"}]))
+        self.assertEqual([note["text"] for note in self.notes()], [original])
+
+    def test_rejected_edited_append_remains_retryable(self):
+        original = "你正在转行。"
+        self.insert_note(original, edited=True)
+        statement = "离职日期已经定在十月底了。"
+        self.save(dialogue=[{"role": "user", "content": statement},
+                            {"role": "assistant", "content": "准备交接。"}])
+        combined = original + "你计划十月底离职。"
+        self.process(self.output([{"topic": "转行", "text": combined}]))
+        self.assertEqual(self.state()["status"], "failed")
+        self.assertEqual(self.state()["extracted"], 0)
+        self.process(self.output([{"topic": "转行", "text": combined, "evidence": [statement]}]), failed=True)
+        self.assertEqual(self.notes()[0]["text"], combined)
+        self.assertEqual(self.state()["extracted"], 1)
+
+    def test_similar_edited_notes_with_same_topic_keep_both_rows(self):
+        self.insert_note("你在准备第一个工作计划。", topic="工作", edited=True)
+        self.insert_note("你在准备第二个工作计划。", topic="工作", edited=True)
+        before = self.notes()
+        self.save()
+        self.process(self.output([{"topic": n["topic"], "text": n["text"]} for n in reversed(before)]))
+        self.assertEqual(self.notes(), before)
+
+    def test_omitting_one_edited_note_does_not_steal_another_with_same_topic(self):
+        self.insert_note("你在准备第一个工作计划。", topic="工作", edited=True)
+        self.insert_note("你在准备第二个工作计划。", topic="工作", edited=True)
+        before = self.notes()
+        self.save()
+        self.process(self.output([{"topic": before[1]["topic"], "text": before[1]["text"]}]))
+        self.assertEqual(self.notes(), before)
+
+    def test_edited_notes_with_identical_text_and_different_topics_keep_both(self):
+        self.insert_note("你在准备转行，也在完善作品。", topic="转行", edited=True)
+        self.insert_note("你在准备转行，也在完善作品。", topic="作品", edited=True)
+        before = self.notes()
+        self.save()
+        self.process(self.output([{"topic": n["topic"], "text": n["text"]} for n in reversed(before)]))
+        self.assertEqual(self.notes(), before)
+
+    def test_evidence_schema_rejects_invalid_quote_fields(self):
+        self.save()
+        for quotes in ("不是数组", [1], ["太短"], ["月" * 1001], ["用户原话。"] * 5):
+            with self.subTest(quotes_type=type(quotes).__name__):
+                _, outcome = memory._validate_changes(self.output([
+                    {"topic": "工作", "text": "你在准备工作计划。", "evidence": quotes},
+                ]))
+                self.assertEqual(outcome, "invalid_schema")
+
+    def test_quote_evidence_is_not_stored_on_new_unedited_note(self):
+        self.save()
+        self.process(self.output([{"topic": "转行", "text": "你正在考虑换工作。",
+                                   "evidence": ["是，我正在考虑换工作。"]}]))
+        self.assertFalse(self.notes()[0]["user_edited"])
+        self.assertNotIn("evidence", self.notes()[0])
+
+    def test_mixed_saved_and_rejected_facts_keep_session_retryable(self):
+        original = "你正在转行。"
+        self.insert_note(original, edited=True)
+        statement = "离职日期已经定在十月底了，我也开始学设计。"
+        self.save(dialogue=[{"role": "user", "content": statement},
+                            {"role": "assistant", "content": "准备计划。"}])
+        candidates = [{"topic": "转行", "text": original + "你十月底离职。"},
+                      {"topic": "设计", "text": "你开始学习设计。"}]
+        self.process(self.output(candidates))
+        self.assertEqual([n["text"] for n in self.notes()], [original, "你开始学习设计。"])
+        self.assertEqual(self.state()["status"], "failed")
+        self.assertEqual(self.state()["extracted"], 0)
+        candidates[0]["evidence"] = [statement]
+        self.process(self.output(candidates), failed=True)
+        self.assertEqual(self.notes()[0]["text"], candidates[0]["text"])
+        self.assertEqual(self.state()["extracted"], 1)
+
+    def test_nested_edited_prefix_appends_to_the_longer_note_once(self):
+        first = "你在转行。"
+        second = first + "你在学习设计。"
+        self.insert_note(first, topic="转行", edited=True)
+        second_id = self.insert_note(second, topic="设计", edited=True)
+        statement = "我报名了一个长期设计课程。"
+        self.save(dialogue=[{"role": "user", "content": statement},
+                            {"role": "assistant", "content": "继续练习。"}])
+        combined = second + "你已报名长期设计课程。"
+        self.process(self.output([{"topic": "转行", "text": first},
+                                   {"topic": "设计", "text": combined, "evidence": [statement]}]))
+        self.assertEqual(len(self.notes()), 2)
+        self.assertEqual(self.notes()[1]["id"], second_id)
+        self.assertEqual(self.notes()[1]["text"], combined)
+        self.assertTrue(all(n["user_edited"] for n in self.notes()))
+
+    def test_multiple_candidates_for_one_edited_note_do_not_create_unprotected_duplicates(self):
+        original = "你正在转行。"
+        self.insert_note(original, edited=True)
+        statement = "我计划十月底离职，也开始整理作品。"
+        self.save(dialogue=[{"role": "user", "content": statement},
+                            {"role": "assistant", "content": "准备计划。"}])
+        self.process(self.output([
+            {"topic": "转行", "text": original + "你计划十月底离职。", "evidence": [statement]},
+            {"topic": "转行", "text": original + "你开始整理作品。", "evidence": [statement]},
+        ]))
+        self.assertEqual(len(self.notes()), 1)
+        self.assertTrue(self.notes()[0]["user_edited"])
+        self.assertEqual(self.state()["status"], "failed")
+
+    def test_automatic_append_keeps_manual_edit_boundary_for_later_retry(self):
+        first = "你正在转行。"
+        second = "你正在学习设计。"
+        first_id = self.insert_note(first, topic="转行")
+        self.insert_note(second, topic="设计", edited=True)
+        with website.database_connection() as c:
+            memory.update_note(c, 1, "profile-ou", first_id, first + "仍在职。")
+        first = self.notes()[0]["text"]
+        statement = "我计划十月底离职，已经整理了作品，也报名了设计课程。"
+        self.save(dialogue=[{"role": "user", "content": statement},
+                            {"role": "assistant", "content": "准备计划。"}])
+        edit_time = self.notes()[0]["updated_at"]
+        self.process(self.output([
+            {"topic": "转行", "text": first + "你计划十月底离职。", "evidence": [statement]},
+            {"topic": "设计", "text": second + "你已报名设计课程。"},
+        ]))
+        self.assertEqual(self.state()["status"], "failed")
+        current = self.notes()[0]["text"]
+        self.process(self.output([
+            {"topic": "转行", "text": current + "你已整理作品。", "evidence": [statement]},
+            {"topic": "设计", "text": second + "你已报名设计课程。", "evidence": [statement]},
+        ]), failed=True)
+        self.assertEqual(self.notes()[0]["text"], current + "你已整理作品。")
+        self.assertEqual(self.notes()[0]["edited_at"], edit_time)
+        self.assertEqual(self.state()["extracted"], 1)
+
+    def test_edited_note_at_character_limit_does_not_silently_drop_append(self):
+        original = "原" * 300
+        self.insert_note(original, edited=True)
+        before = self.notes()
+        statement = "我计划十月底离职。"
+        self.save(dialogue=[{"role": "user", "content": statement},
+                            {"role": "assistant", "content": "准备交接。"}])
+        self.process(self.output([{"topic": "转行", "text": original + statement, "evidence": [statement]}]))
+        self.assertEqual(self.notes(), before)
+        self.assertEqual(self.state()["status"], "failed")
+        self.assertEqual(self.state()["extraction_outcome"], "limits_exceeded")
+        self.assertEqual(self.state()["extracted"], 0)
+
     def test_edited_note_rejects_invented_append(self):
         self.insert_note(edited=True)
         before = self.notes()
@@ -514,15 +734,19 @@ class ProfileMemoryTests(unittest.TestCase):
             self.assertNotIn("<", raw)
             return json.loads(raw)
         current = block("current_notes")
-        self.assertEqual(set(current[0]), {"topic", "text", "user_edited"})
+        self.assertEqual(set(current[0]), {"topic", "text", "user_edited", "edited_at"})
         self.assertTrue(current[0]["user_edited"])
+        self.assertEqual(current[0]["edited_at"], memory._timestamp("2026-01-01 00:00:00"))
         self.assertIn("你在备考。", json.dumps(block("user_removed"), ensure_ascii=False))
         questions = block("recent_questions")
         self.assertEqual(len(questions), 10)
         self.assertEqual(questions[0]["question"], "问题11")
         self.assertEqual(questions[-1]["question"], "问题2")
         self.assertTrue(all(set(q) == {"date", "question"} for q in questions))
-        session = json.dumps(block("session"), ensure_ascii=False)
+        session_data = block("session")
+        user_messages = [m for conversation in session_data for m in conversation["messages"] if m["role"] == "用户"]
+        self.assertTrue(all(m["spoken_at"] >= current[0]["edited_at"] for m in user_messages))
+        session = json.dumps(session_data, ensure_ascii=False)
         self.assertIn("[塔罗师问]", session)
         self.assertIn(attack, session)
 

@@ -993,14 +993,20 @@ def follow_up_content_with_hint(content):
 def iter_follow_up_text(chunks):
     """最多保留标记的三个字，避免跨流式分块的总结标记出现在页面。"""
     pending = ""
+    summary_started = False
     for chunk in chunks:
+        if summary_started:
+            continue
         pending += chunk
         marker_at = pending.find(SUMMARY_MARKER)
         if marker_at >= 0:
             visible = pending[:marker_at]
             if visible:
                 yield visible
-            return
+            # 过滤总结内容后仍读到模型结束，才能验证完整回应或传递断流错误。
+            summary_started = True
+            pending = ""
+            continue
         # 仅延迟可能构成标记的末尾；正文无需等待整个模型回复。
         hold = 0
         for length in range(len(SUMMARY_MARKER) - 1, 0, -1):
@@ -1508,6 +1514,10 @@ def end_conversation():
     if not isinstance(conversation_id, str) or not re.fullmatch(r"[0-9a-f]{32}", conversation_id):
         return jsonify(error="对话编号无效。"), 400
     with CONVERSATION_LOCK:
+        conversation = CONVERSATIONS.get(conversation_id)
+        owner_id = conversation.get("memory_user_id") if conversation else None
+        if owner_id is not None and flask_session.get("user_id") != owner_id:
+            return jsonify(error="请登录创建这次牌局的账号，或重新抽牌。"), 403
         CONVERSATIONS.pop(conversation_id, None)
     return jsonify(ended=True)
 

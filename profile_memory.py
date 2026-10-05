@@ -53,6 +53,7 @@ def initialize_tables(connection):
             topic TEXT NOT NULL DEFAULT '',
             text TEXT NOT NULL,
             user_edited INTEGER NOT NULL DEFAULT 0,
+            edited_at TEXT NOT NULL DEFAULT '',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -95,9 +96,16 @@ def initialize_tables(connection):
     if not connection.in_transaction:
         connection.execute("BEGIN IMMEDIATE")
     note_columns = {row[1] for row in connection.execute("PRAGMA table_info(profile_notes)")}
-    for name, definition in (("topic", "TEXT NOT NULL DEFAULT ''"), ("user_edited", "INTEGER NOT NULL DEFAULT 0")):
+    for name, definition in (
+        ("topic", "TEXT NOT NULL DEFAULT ''"),
+        ("user_edited", "INTEGER NOT NULL DEFAULT 0"),
+        ("edited_at", "TEXT NOT NULL DEFAULT ''"),
+    ):
         if name not in note_columns:
             connection.execute(f"ALTER TABLE profile_notes ADD COLUMN {name} {definition}")
+    connection.execute(
+        "UPDATE profile_notes SET edited_at = updated_at WHERE user_edited = 1 AND edited_at = ''",
+    )
     session_columns = {row[1] for row in connection.execute("PRAGMA table_info(profile_memory_sessions)")}
     for name, definition in (
         ("revision", "INTEGER NOT NULL DEFAULT 1"),
@@ -136,9 +144,9 @@ def _connection(database_path):
 def get_notes(connection, user_id, profile_id):
     return [
         {"id": str(row[0]), "topic": row[1], "text": row[2], "user_edited": bool(row[3]),
-         "created_at": row[4], "updated_at": row[5]}
+         "created_at": row[4], "updated_at": row[5], "edited_at": row[6]}
         for row in connection.execute(
-            "SELECT id, topic, text, user_edited, created_at, updated_at FROM profile_notes "
+            "SELECT id, topic, text, user_edited, created_at, updated_at, edited_at FROM profile_notes "
             "WHERE user_id = ? AND profile_id = ? ORDER BY id", (user_id, profile_id),
         )
     ]
@@ -194,10 +202,11 @@ def update_note(connection, user_id, profile_id, note_id, text, topic=None):
                 raise ValueError("全部便签合计不能超过 3000 个字，请先缩短其他便签。")
             if row[2] != text.strip():
                 _record_removed(connection, user_id, profile_id, row[2])
+            now = _now_text()
             connection.execute(
-                "UPDATE profile_notes SET text = ?, topic = ?, user_edited = 1, updated_at = ? "
+                "UPDATE profile_notes SET text = ?, topic = ?, user_edited = 1, updated_at = ?, edited_at = ? "
                 "WHERE id = ? AND user_id = ? AND profile_id = ?",
-                (text.strip(), final_topic, _now_text(), row[0], user_id, profile_id),
+                (text.strip(), final_topic, now, now, row[0], user_id, profile_id),
             )
     return next(note for note in get_notes(connection, user_id, profile_id) if note["id"] == str(row[0]))
 
@@ -331,7 +340,7 @@ def _session_input(dialogue):
                 if questions:
                     result.append({"role": "[塔罗师问]", "text": questions[-1].strip()[:200]})
             if content:
-                result.append({"role": "用户", "text": content})
+                result.append({"role": "用户", "text": content, "spoken_at": _timestamp(item.get("spoken_at"))})
             previous_assistant = ""
     return result
 
@@ -380,11 +389,26 @@ def _validate_changes(raw, notes=None):
     normalized = []
     seen = set()
     for item in value["notes"]:
-        if not isinstance(item, dict) or set(item) != {"topic", "text"}:
+        if (not isinstance(item, dict) or not {"topic", "text"}.issubset(item)
+                or set(item) - {"topic", "text", "evidence"}):
             return None, "invalid_schema"
         if not _valid_topic(item["topic"]) or not isinstance(item["text"], str) or not item["text"].strip():
             return None, "invalid_schema"
+        if len(item["text"].strip()) > MAX_NOTE_LENGTH and any(
+            old["user_edited"] and item["text"].strip().startswith(old["text"])
+            for old in notes or []
+        ):
+            # Truncating a protected 300-character original would silently drop
+            # every appended fact and incorrectly complete this revision.
+            return None, "limits_exceeded"
         note = {"topic": item["topic"].strip(), "text": item["text"].strip()[:MAX_NOTE_LENGTH]}
+        if "evidence" in item:
+            evidence = item["evidence"]
+            if (not isinstance(evidence, list) or len(evidence) > 4
+                    or any(not isinstance(quote, str) or not 5 <= len(quote.strip()) <= 1000
+                           for quote in evidence)):
+                return None, "invalid_schema"
+            note["evidence"] = [quote.strip() for quote in evidence]
         identity = note["topic"], note["text"]
         if identity in seen:
             return None, "invalid_schema"
@@ -437,36 +461,68 @@ def _blocked_removed(text, removed, user_words):
     return False
 
 
+def _new_quote_evidence(quotes, user_words, after):
+    """Verify the model's source quotes, without requiring its summary to be verbatim."""
+    return bool(quotes) and all(
+        any(_timestamp(word.get("spoken_at")) >= after and quote in word["content"]
+            for word in user_words)
+        for quote in quotes
+    )
+
+
+def _edit_cutoff(note):
+    return _timestamp(note.get("edited_at") or note["updated_at"])
+
+
 def _protect_set(proposed, existing, removed, user_words):
-    desired = [dict(note, user_edited=False) for note in proposed
-               if not _blocked_removed(note["text"], removed, user_words)]
-    for old in existing:
-        if not old["user_edited"]:
-            continue
-        exact = next((note for note in desired if note["text"] == old["text"]), None)
-        if exact:
-            exact["topic"] = old["topic"]
-            exact["user_edited"] = True
-        candidate = next((note for note in desired if note is not exact and note["text"].startswith(old["text"])), None)
-        if candidate is None and exact is None:
-            candidate = next((note for note in desired if note["topic"] == old["topic"]), None)
-        if candidate is None:
-            candidate = next((note for note in desired if note is not exact and
-                              SequenceMatcher(None, _comparable(note["text"]), _comparable(old["text"])).ratio() >= 0.65), None)
-        accepted = False
-        if candidate and candidate["text"].startswith(old["text"]):
+    # An edit records the old text as removed. Check the new part of an edited
+    # note separately so similarity to that old text cannot discard new facts.
+    edited = [note for note in existing if note["user_edited"]]
+    assigned = {index: [] for index in range(len(edited))}
+    unassigned = []
+    for note in proposed:
+        matches = [index for index, old in enumerate(edited) if note["text"] == old["text"]]
+        if not matches:
+            matches = [index for index, old in enumerate(edited) if note["text"].startswith(old["text"])]
+            if matches:
+                longest = max(len(edited[index]["text"]) for index in matches)
+                matches = [index for index in matches if len(edited[index]["text"]) == longest]
+        matching_topic = [index for index in matches if edited[index]["topic"] == note["topic"]]
+        owners = matching_topic or matches
+        if len(owners) == 1:
+            assigned[owners[0]].append(note)
+        elif not owners:
+            unassigned.append(note)
+        # Ambiguous edited text is not safe to turn into an unprotected new note.
+
+    protected = []
+    for index, old in enumerate(edited):
+        candidates = assigned[index]
+        if not candidates:
+            rewritten = next((note for note in unassigned if note["topic"] == old["topic"]), None)
+            if rewritten is None:
+                rewritten = next((note for note in unassigned if
+                                  SequenceMatcher(None, _comparable(note["text"]), _comparable(old["text"])).ratio() >= 0.65), None)
+            if rewritten:
+                unassigned.remove(rewritten)
+        accepted = []
+        for candidate in candidates:
             extra = candidate["text"][len(old["text"]):].strip(" \n，,。;；")
-            accepted = bool(extra) and _explicitly_said(extra, user_words, _timestamp(old["updated_at"]))
-        if accepted:
-            if exact:
-                desired.remove(exact)
-            candidate["topic"] = old["topic"]
-            candidate["user_edited"] = True
-        else:
-            if candidate:
-                desired.remove(candidate)
-            if exact is None:
-                desired.append({"topic": old["topic"], "text": old["text"], "user_edited": True})
+            if extra and (
+                _explicitly_said(extra, user_words, _edit_cutoff(old)) or
+                _new_quote_evidence(candidate.get("evidence", []), user_words, _edit_cutoff(old))
+            ) and not _blocked_removed(extra, removed, user_words):
+                accepted.append(candidate)
+        # Keep one protected row per edited note. Duplicate model candidates are
+        # filtered and leave the batch retryable instead of creating spare copies.
+        choice = max(accepted, key=lambda note: len(note["text"])) if accepted else old
+        protected.append({"topic": old["topic"], "text": choice["text"], "user_edited": True})
+    desired = [dict(note, user_edited=False) for note in unassigned] + protected
+    desired = [
+        {key: note[key] for key in ("topic", "text", "user_edited")}
+        for note in desired
+        if note["user_edited"] or not _blocked_removed(note["text"], removed, user_words)
+    ]
     if len(desired) > MAX_NOTES or sum(len(note["text"]) for note in desired) > MAX_TOTAL_LENGTH:
         return None
     if len({(note["topic"], note["text"]) for note in desired}) != len(desired):
@@ -493,13 +549,20 @@ def _replace_set(connection, user_id, profile_id, desired, existing):
     for note in desired:
         if (note["topic"], note["text"]) in unchanged:
             continue
-        old = next((item for item in available.values()
-                    if item["topic"] == note["topic"] and item["user_edited"] == note["user_edited"]), None)
+        matches = [item for item in available.values()
+                   if item["topic"] == note["topic"] and item["user_edited"] == note["user_edited"]]
+        if note["user_edited"]:
+            originals = [item for item in matches if note["text"].startswith(item["text"])]
+            old = max(originals, key=lambda item: len(item["text"])) if originals else next(iter(matches), None)
+        else:
+            old = next(iter(matches), None)
         if old:
             connection.execute(
-                "UPDATE profile_notes SET topic = ?, text = ?, user_edited = ?, updated_at = ? "
+                "UPDATE profile_notes SET topic = ?, text = ?, user_edited = ?, updated_at = ?, edited_at = ? "
                 "WHERE id = ? AND user_id = ? AND profile_id = ?",
-                (note["topic"], note["text"], int(note["user_edited"]), _now_text(), old["id"], user_id, profile_id),
+                (note["topic"], note["text"], int(note["user_edited"]), _now_text(),
+                 old.get("edited_at") or (old["updated_at"] if old["user_edited"] else ""),
+                 old["id"], user_id, profile_id),
             )
             available.pop(old["id"])
         else:
@@ -606,7 +669,11 @@ def _run_sessions(connection, user_id, profile_id, session_ids, provider, includ
     recent = _recent_questions(connection, user_id, profile_id)
     connection.commit()
     try:
-        current_notes = [{key: note[key] for key in ("topic", "text", "user_edited")} for note in existing]
+        current_notes = [
+            {key: note[key] for key in ("topic", "text", "user_edited")}
+            | ({"edited_at": _edit_cutoff(note)} if note["user_edited"] else {})
+            for note in existing
+        ]
         # Each conversation keeps its own provenance and assistant-question context.
         # Merge these conversations into one note update; never pretend all words came
         # from a single conversation when detecting recurring themes.
@@ -630,10 +697,12 @@ def _run_sessions(connection, user_id, profile_id, session_ids, provider, includ
                 '无变化输出 {"changed":false}；有变化输出 {"changed":true,"notes":[{"topic":"主题","text":"完整便签"}]}。'
                 'notes 是完整最终集合，包含未变化条目；topic 为2到4字，自拟主题；最多20条，每条300字以内，总正文3000字以内。'
                 '超出总量时先合并、压缩，保留重要信息。user_edited 为true的原文禁止改写或删除，只能追加用户明确新说的事实。'
+                '给编辑过的便签追加提炼后的新事实时，该条额外返回 evidence 数组，'
+                '放1到4段支持新增事实的用户原话，每段5到1000字，逐字引用；没有补充的便签无需 evidence。'
             )},
             {"role": "user", "content": data},
         ], provider)
-        proposed, outcome = _validate_changes(raw)
+        proposed, outcome = _validate_changes(raw, existing)
         _begin_write(connection)
         latest = [
             connection.execute(
@@ -682,8 +751,16 @@ def _run_sessions(connection, user_id, profile_id, session_ids, provider, includ
                 logger.warning("Profile memory extraction rejected: limits_exceeded")
             else:
                 operations = _replace_set(connection, user_id, profile_id, desired, existing)
+                rejected = {
+                    (note["topic"], note["text"]) for note in proposed
+                } != {(note["topic"], note["text"]) for note in desired}
+                if rejected:
+                    logger.warning("Profile memory extraction rejected: protected_content")
                 for row in latest:
-                    _finish(connection, row, "changed" if operations else "no_effect")
+                    if rejected:
+                        _finish(connection, row, "protected_content", "failed", False)
+                    else:
+                        _finish(connection, row, "changed" if operations else "no_effect")
         connection.commit()
         return count + len(snapshots)
     except Exception:

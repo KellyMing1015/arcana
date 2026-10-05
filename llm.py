@@ -1,14 +1,18 @@
 """OpenAI 兼容 Chat Completions 的流式中转。"""
 
 import json
+import logging
 import os
 import socket
+import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 
 TIMEOUT_SECONDS = 60
+TRANSIENT_HTTP_CODES = {502, 503, 504}
+logger = logging.getLogger(__name__)
 
 
 class LLMError(Exception):
@@ -125,13 +129,22 @@ def open_chat_stream(messages, provider=None):
         },
         method="POST",
     )
-    try:
-        return urlopen(request, timeout=TIMEOUT_SECONDS)
-    except HTTPError as error:
-        error.close()
-        raise _http_error_message(error) from error
-    except (URLError, OSError, TimeoutError) as error:
-        raise friendly_error(error) from error
+    # Only retry an explicit temporary server error before a stream is opened.
+    # Never replay a response that has already started generating text.
+    for attempt in range(2):
+        try:
+            return urlopen(request, timeout=TIMEOUT_SECONDS)
+        except HTTPError as error:
+            error.close()
+            if attempt == 0 and error.code in TRANSIENT_HTTP_CODES:
+                logger.warning("LLM upstream temporarily unavailable: http_%s; retrying once", error.code)
+                time.sleep(0.5)
+                continue
+            logger.warning("LLM upstream request failed: http_%s", error.code)
+            raise _http_error_message(error) from error
+        except (URLError, OSError, TimeoutError) as error:
+            logger.warning("LLM upstream connection failed: %s", type(error).__name__)
+            raise friendly_error(error) from error
 
 
 def list_models(provider):
@@ -174,13 +187,14 @@ def list_models(provider):
 def iter_chat_text(response):
     """逐个解析 OpenAI 格式 SSE，只产出 choices[0].delta.content 文本。"""
     data_lines = []
+    finished = False
 
     def parse_event(lines):
         if not lines:
-            return None, False
+            return None, False, False
         data = "\n".join(lines)
         if data == "[DONE]":
-            return None, True
+            return None, True, True
         try:
             payload = json.loads(data)
         except json.JSONDecodeError as error:
@@ -189,24 +203,45 @@ def iter_chat_text(response):
             raise _stream_error_message(payload["error"])
         choices = payload.get("choices", []) if isinstance(payload, dict) else []
         if not choices:
-            return None, False
-        content = choices[0].get("delta", {}).get("content")
-        return content if isinstance(content, str) and content else None, False
+            return None, False, False
+        if not isinstance(choices, list) or not isinstance(choices[0], dict):
+            raise LLMError("中转站返回了无法识别的流式数据。")
+        choice = choices[0]
+        delta = choice.get("delta") or {}
+        if not isinstance(delta, dict):
+            raise LLMError("中转站返回了无法识别的流式数据。")
+        content = delta.get("content")
+        reason = choice.get("finish_reason")
+        if reason and reason != "stop":
+            logger.warning("LLM upstream did not finish a text response normally")
+            if reason == "length":
+                raise LLMError("模型回复达到长度上限，回应尚未完整，请重试或缩短问题。")
+            if reason == "content_filter":
+                raise LLMError("所选模型拦截了这次回应，请调整问题后重试。")
+            if reason in ("tool_calls", "function_call"):
+                raise LLMError("模型返回了工具调用，未完成解读，请检查所选模型的接口兼容性。")
+            raise LLMError("模型未正常完成回应，请重试。")
+        terminal = reason == "stop"
+        return content if isinstance(content, str) and content else None, False, terminal
 
     try:
         for raw_line in response:
             line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
             if not line:
-                content, done = parse_event(data_lines)
+                content, done, terminal = parse_event(data_lines)
                 data_lines = []
+                finished = finished or terminal
                 if done:
                     return
                 if content:
                     yield content
             elif line.startswith("data:"):
                 data_lines.append(line[5:].lstrip(" "))
-        content, _ = parse_event(data_lines)
+        content, done, terminal = parse_event(data_lines)
         if content:
             yield content
+        if not (finished or done or terminal):
+            logger.warning("LLM upstream stream ended without a completion marker")
+            raise LLMError("解读连接提前结束，回应尚未完成，请重试。")
     except (URLError, OSError, TimeoutError) as error:
         raise friendly_error(error) from error

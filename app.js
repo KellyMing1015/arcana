@@ -155,12 +155,12 @@ function loadCardImageAttempt(card, attempt) {
     const finish = (loaded) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
       image.onload = null;
       image.onerror = null;
       resolve(loaded ? image : null);
     };
-    const timeout = setTimeout(() => finish(false), 4000);
+    // 慢网下继续复用正在下载的图片，只有明确失败才换地址重试。
+    // 进入结果页的等待上限由选牌动画控制，不会被这个预加载阻塞。
     image.onload = async () => {
       if (image.decode) {
         try { await image.decode(); } catch (_error) { /* Safari 偶尔会拒绝重复 decode，naturalWidth 仍可确认图片完整。 */ }
@@ -233,6 +233,13 @@ function handleCardImageLoad(event) {
 
 document.addEventListener("error", handleCardImageError, true);
 document.addEventListener("load", handleCardImageLoad, true);
+
+function connectionErrorMessage() {
+  const local = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(location.hostname);
+  return local
+    ? "暂时无法连接解读服务，请确认本地服务已启动。"
+    : "与解读服务的连接中断，请稍后重试。若持续发生，请检查网络或服务器状态。";
+}
 
 function renderQuestion() {
   app.innerHTML = `<section class="ritual-screen question-screen screen-enter">
@@ -1210,7 +1217,7 @@ function bindConversationForm(screen) {
         status.textContent = "已暂停。这轮不会计入次数，你可以重新输入。";
       } else {
         bubble.classList.add("is-error");
-        answerText.textContent = error instanceof TypeError ? "暂时无法连接解读服务，请确认 Flask 已启动。" : (error.message || "回应失败，请稍后再试。");
+        answerText.textContent = error instanceof TypeError ? connectionErrorMessage() : (error.message || "回应失败，请稍后再试。");
         answerRecord.text = answerText.textContent;
         answerRecord.error = true;
         status.textContent = "这轮没有计入次数，你可以修改后重新发送。";
@@ -1343,7 +1350,7 @@ function renderResult() {
       if (error?.name === "AbortError") return;
       revealReading();
       const message = error instanceof TypeError
-        ? "暂时无法连接解读服务，请确认 Flask 已启动。"
+        ? connectionErrorMessage()
         : error.message?.includes("请先设置环境变量")
           ? "还没有可用的模型。点击左上角 ARCANA 添加供应商，或在服务端设置 .env。"
         : (error.message || "解读暂时失败，请稍后重试。");

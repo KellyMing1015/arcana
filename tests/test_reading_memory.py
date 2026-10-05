@@ -368,6 +368,157 @@ class ReadingMemoryTests(unittest.TestCase):
         self.assertEqual(follow_data, original_data)
         self.assertEqual(self.extract_history(follow_system), original_history)
 
+    def test_failed_initial_stream_never_saves_a_partial_answer_or_extracts_notes(self):
+        text = json.dumps({"choices": [{"delta": {"content": "只输出了一半的解读。"}}]}, ensure_ascii=False)
+        partial = f"data: {text}\n\n".encode("utf-8")
+        failures = {
+            "stream_error": partial + b'data: {"error":{"code":"insufficient_quota"}}\n\n',
+            "unexpected_eof": partial,
+        }
+        for failure, data in failures.items():
+            with self.subTest(failure=failure):
+                upstream = io.BytesIO(data)
+                with patch.object(website, "open_chat_stream", return_value=upstream), patch.object(
+                    website.profile_memory, "schedule_session"
+                ) as scheduler:
+                    response = self.client.post("/api/reading", json=self.payload, buffered=True)
+                self.assertEqual(response.status_code, 200)
+                events = [json.loads(line[6:]) for line in response.get_data(as_text=True).splitlines() if line.startswith("data: ")]
+                self.assertTrue(events[-1].get("error"), events)
+                self.assertFalse(any(event.get("done") for event in events), events)
+                conversation_id = events[0]["conversationId"]
+                self.assertNotIn(conversation_id, website.CONVERSATIONS)
+                self.assertTrue(upstream.closed)
+                scheduler.assert_not_called()
+                with website.database_connection() as connection:
+                    saved = connection.execute(
+                        "SELECT dialogue, rounds FROM profile_memory_sessions WHERE id = ?",
+                        (conversation_id,),
+                    ).fetchone()
+                self.assertEqual(saved["rounds"], 0)
+                self.assertEqual([item["role"] for item in json.loads(saved["dialogue"])], ["user"])
+
+    def test_failed_private_follow_up_can_retry_without_consuming_round_or_changing_memory(self):
+        self.insert_history(question="这份历史只能属于当前账号")
+        text = json.dumps({"choices": [{"delta": {"content": "不完整的追问回答。"}}]}, ensure_ascii=False)
+        partial = f"data: {text}\n\n".encode("utf-8")
+        failures = {
+            "connection_error": website.LLMError("中转站暂时无法连接。", 502),
+            "empty_response": b"data: [DONE]\n\n",
+            "stream_error": partial + b'data: {"error":{"code":"insufficient_quota"}}\n\n',
+            "unexpected_eof": partial,
+        }
+        for failure, data in failures.items():
+            with self.subTest(failure=failure):
+                initial_messages, conversation_id = self.start_reading()
+                original = copy.deepcopy(website.CONVERSATIONS[conversation_id])
+                with website.database_connection() as connection:
+                    original_saved = dict(connection.execute(
+                        "SELECT dialogue, rounds, revision FROM profile_memory_sessions WHERE id = ?",
+                        (conversation_id,),
+                    ).fetchone())
+                upstream = None if isinstance(data, Exception) else io.BytesIO(data)
+                failure_kwargs = {"side_effect": data} if isinstance(data, Exception) else {"return_value": upstream}
+                with patch.object(website, "open_chat_stream", **failure_kwargs), patch.object(
+                    website.profile_memory, "schedule_session"
+                ) as scheduler:
+                    failed = self.client.post("/api/follow-up", json={
+                        "conversationId": conversation_id, "message": "失败时不能写入历史的这句话",
+                    }, buffered=True)
+                if failure in ("connection_error", "empty_response"):
+                    self.assertEqual(failed.status_code, 502, failed.get_data(as_text=True))
+                    self.assertIn("error", failed.json)
+                else:
+                    self.assertEqual(failed.status_code, 200)
+                    events = [json.loads(line[6:]) for line in failed.get_data(as_text=True).splitlines() if line.startswith("data: ")]
+                    self.assertTrue(events[-1].get("error"), events)
+                    self.assertFalse(any(event.get("done") for event in events), events)
+                scheduler.assert_not_called()
+                if upstream is not None:
+                    self.assertTrue(upstream.closed)
+                current = website.CONVERSATIONS[conversation_id]
+                self.assertFalse(current["busy"])
+                self.assertEqual(current["rounds"], 0)
+                self.assertEqual(current["messages"], original["messages"])
+                self.assertEqual(current["profile_dialogue"], original["profile_dialogue"])
+                with website.database_connection() as connection:
+                    current_saved = dict(connection.execute(
+                        "SELECT dialogue, rounds, revision FROM profile_memory_sessions WHERE id = ?",
+                        (conversation_id,),
+                    ).fetchone())
+                self.assertEqual(current_saved, original_saved)
+                captured = []
+
+                def retry_upstream(messages, _provider):
+                    captured.append(copy.deepcopy(messages))
+                    return self.fake_stream("重试之后的完整回答。")
+
+                with patch.object(website, "open_chat_stream", side_effect=retry_upstream), patch.object(
+                    website.profile_memory, "schedule_session"
+                ) as scheduler:
+                    retry = self.client.post("/api/follow-up", json={
+                        "conversationId": conversation_id, "message": "我继续问第一步应该怎么办？",
+                    }, buffered=True)
+                self.assertEqual(retry.status_code, 200, retry.get_data(as_text=True))
+                retry_events = [json.loads(line[6:]) for line in retry.get_data(as_text=True).splitlines() if line.startswith("data: ")]
+                self.assertEqual(retry_events[-1], {"done": True, "rounds": 1, "closed": False})
+                self.assertEqual(
+                    self.extract_history(captured[0][0]["content"]),
+                    self.extract_history(initial_messages[0]["content"]),
+                )
+                self.assertNotIn("失败时不能写入历史", json.dumps(captured[0], ensure_ascii=False))
+                scheduler.assert_called_once_with(website.app.config["DATABASE"], 1, "profile-ou", conversation_id)
+
+    def test_only_the_owner_can_end_a_conversation_with_private_memory(self):
+        self.insert_history(question="账号私有历史")
+        _, conversation_id = self.start_reading()
+        for user_id in (None, 2):
+            with self.subTest(user_id=user_id):
+                self.sign_in(user_id)
+                with patch.object(website.profile_memory, "schedule_session") as scheduler:
+                    response = self.client.post("/api/conversation/end", json={"conversationId": conversation_id})
+                self.assertEqual(response.status_code, 403, response.get_data(as_text=True))
+                self.assertIn("error", response.json)
+                self.assertIn(conversation_id, website.CONVERSATIONS)
+                scheduler.assert_not_called()
+        self.sign_in(1)
+        response = self.client.post("/api/conversation/end", json={"conversationId": conversation_id})
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertNotIn(conversation_id, website.CONVERSATIONS)
+
+    def test_anonymous_reading_can_be_ended_without_an_account(self):
+        self.sign_in(None)
+        _, conversation_id = self.start_reading({**self.payload, "userInfo": None})
+        response = self.client.post("/api/conversation/end", json={"conversationId": conversation_id})
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(response.json, {"ended": True})
+        self.assertNotIn(conversation_id, website.CONVERSATIONS)
+
+    def test_all_deck_and_public_ui_images_are_present_and_support_browser_cache(self):
+        cards = sorted((Path(website.ROOT) / "assets" / "cards").glob("*.webp"))
+        self.assertEqual(len(cards), 78)
+        image_paths = [(f"/assets/cards/{card.name}?v=2", card, "image/webp") for card in cards]
+        image_paths.extend(
+            (f"/assets/ui/{name}?v=6", Path(website.ROOT) / "assets" / "ui" / name, None)
+            for name in sorted(website.UI_FILES)
+        )
+        for url, path, content_type in image_paths:
+            with self.subTest(image=path.name):
+                with self.client.get(url) as response:
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.data, path.read_bytes())
+                    if content_type:
+                        self.assertEqual(response.mimetype, content_type)
+                    self.assertEqual(response.headers["Cache-Control"], "public, max-age=31536000, immutable")
+                    etag = response.headers["ETag"]
+                with self.client.get(url, headers={"If-None-Match": etag}) as cached:
+                    self.assertEqual(cached.status_code, 304)
+                    self.assertEqual(cached.data, b"")
+        for path in ("/assets/cards/../arcana.db", "/assets/ui/../../.env", "/assets/ui/not-public.png"):
+            with self.subTest(path=path):
+                with self.client.get(path) as response:
+                    self.assertEqual(response.status_code, 404)
+
 
 if __name__ == "__main__":
     unittest.main()

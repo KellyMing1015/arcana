@@ -173,6 +173,91 @@ class ReadingTests(unittest.TestCase):
         self.assertTrue(prompt.startswith(f"当前时间：固定时间\n{website.TIME_REASONING_RULE}\n"))
         self.assertIn("必须以第一行给出的东八区当前时间为唯一基准", prompt)
 
+    def test_reading_and_every_follow_up_send_the_current_stage_prompt(self):
+        """验证实际送出的消息，避免 prompt 文件存在却没有送给模型。"""
+        base = (website.ROOT / "prompts" / "base.md").read_text(encoding="utf-8").strip()
+        reading = (website.ROOT / "prompts" / "reading.md").read_text(encoding="utf-8").strip()
+        conversation = (website.ROOT / "prompts" / "conversation.md").read_text(encoding="utf-8").strip()
+        captured = []
+
+        def fake_upstream(messages, _provider):
+            captured.append(copy.deepcopy(messages))
+            return io.BytesIO(b'data: {"choices":[{"delta":{"content":"response"}}]}\n\ndata: [DONE]\n\n')
+
+        with patch.object(website, "open_chat_stream", side_effect=fake_upstream), \
+                patch.object(website, "current_time_line", side_effect=["当前时间：初次", "当前时间：追问一", "当前时间：追问二"]):
+            response = self.client.post("/api/reading", json={
+                **self.payload, "userInfo": {"enabled": True, "nickname": "测试用户"},
+            }, buffered=True)
+            self.assertEqual(response.status_code, 200)
+            events = [json.loads(line[6:]) for line in response.get_data(as_text=True).splitlines() if line.startswith("data: ")]
+            conversation_id = events[0]["conversationId"]
+            for message in ("我昨天开始学产品了", "我担心自己做不好"):
+                follow = self.client.post("/api/follow-up", json={
+                    "conversationId": conversation_id, "message": message,
+                }, buffered=True)
+                self.assertEqual(follow.status_code, 200)
+
+        first_prompt = captured[0][0]["content"]
+        self.assertTrue(first_prompt.startswith("当前时间：初次\n"))
+        self.assertIn(base + "\n\n" + reading, first_prompt)
+        self.assertNotIn(conversation, first_prompt)
+        for index, sent in enumerate(captured[1:], start=1):
+            with self.subTest(round=index):
+                prompt = sent[0]["content"]
+                self.assertTrue(prompt.startswith(f"当前时间：追问{'一' if index == 1 else '二'}\n"))
+                self.assertIn(base + "\n\n" + conversation, prompt)
+                self.assertNotIn(reading, prompt)
+                self.assertNotIn("ARCANA_FRAMEWORK", prompt)
+                self.assertIn("昵称：测试用户", prompt)
+                self.assertEqual(sent[1], captured[0][1])
+                self.assertEqual(sent[2], {"role": "assistant", "content": "response"})
+        self.assertEqual(captured[2][3]["content"], "我昨天开始学产品了")
+        stored = website.CONVERSATIONS[conversation_id]["messages"]
+        self.assertEqual(stored[0]["content"], first_prompt)
+        self.assertNotIn(website.FOLLOW_UP_HINT, json.dumps(stored, ensure_ascii=False))
+
+    def test_follow_up_stage_keeps_history_but_refreshes_manually_edited_notes(self):
+        self.client.post("/api/register", json={
+            "email": "prompt-stage@example.com", "nickname": "测试用户", "password": "password123",
+        })
+        profile = {"enabled": True, "id": "prompt-stage-profile", "nickname": "测试用户"}
+        history = '<reading_history>固定历史快照</reading_history>'
+        old_notes = '<user_notes>编辑前的便签</user_notes>'
+        new_notes = '<user_notes>用户编辑后的便签</user_notes>'
+        captured = []
+
+        def fake_upstream(messages, _provider):
+            captured.append(copy.deepcopy(messages))
+            return io.BytesIO(b'data: {"choices":[{"delta":{"content":"response"}}]}\n\ndata: [DONE]\n\n')
+
+        with patch.object(website, "open_chat_stream", side_effect=fake_upstream), \
+                patch.object(website, "load_reading_memory", return_value=history) as load_history, \
+                patch.object(website, "load_user_notes_prompt", side_effect=[old_notes, new_notes]):
+            response = self.client.post("/api/reading", json={**self.payload, "userInfo": profile}, buffered=True)
+            self.assertEqual(response.status_code, 200)
+            events = [json.loads(line[6:]) for line in response.get_data(as_text=True).splitlines() if line.startswith("data: ")]
+            conversation_id = events[0]["conversationId"]
+            follow = self.client.post("/api/follow-up", json={
+                "conversationId": conversation_id, "message": "我又有新情况了", "userInfo": profile,
+            }, buffered=True)
+            self.assertEqual(follow.status_code, 200)
+            disabled = self.client.post("/api/follow-up", json={
+                "conversationId": conversation_id, "message": "继续聊", "userInfo": {"enabled": False},
+            }, buffered=True)
+            self.assertEqual(disabled.status_code, 200)
+            load_history.assert_called_once_with(1, "prompt-stage-profile")
+
+        self.assertIn(old_notes, captured[0][0]["content"])
+        self.assertIn(new_notes, captured[1][0]["content"])
+        self.assertNotIn(old_notes, captured[1][0]["content"])
+        for sent in captured:
+            self.assertIn(history, sent[0]["content"])
+        self.assertIn(website.CONVERSATION_PROMPT, captured[1][0]["content"])
+        self.assertIn(website.CONVERSATION_PROMPT, captured[2][0]["content"])
+        self.assertNotIn(old_notes, captured[2][0]["content"])
+        self.assertNotIn(new_notes, captured[2][0]["content"])
+
     def test_current_time_refresh_does_not_duplicate_time_rule(self):
         old_prompt = f"当前时间：旧时间\n{website.TIME_REASONING_RULE}\n原始规则"
         with patch.object(website, "current_time_line", return_value="当前时间：新时间"):
@@ -322,6 +407,30 @@ class ReadingTests(unittest.TestCase):
                 ]))
                 self.assertEqual("".join(result), "回应")
         self.assertEqual("".join(website.iter_follow_up_text(["开场【", "普通括号内容】", "结尾【总"])), "开场【普通括号内容】结尾【总")
+
+    def test_hidden_follow_up_summary_cannot_hide_an_incomplete_stream(self):
+        conversation_id = "f" * 32
+        initial = [{"role": "system", "content": website.SYSTEM_PROMPT}]
+        website.CONVERSATIONS[conversation_id] = {
+            "messages": copy.deepcopy(initial), "rounds": 0,
+            "busy": False, "updated_at": website.time.time(),
+        }
+        event = json.dumps({"choices": [{"delta": {"content": "直白回应。\n【总结】隐藏内容"}}]}, ensure_ascii=False)
+        stream = io.BytesIO(("data: " + event + "\n\n").encode("utf-8"))
+        with patch.object(website, "open_chat_stream", return_value=stream), \
+                patch.object(website, "schedule_profile_conversation") as schedule:
+            response = self.client.post("/api/follow-up", json={
+                "conversationId": conversation_id, "message": "那下一步怎么做？",
+            }, buffered=True)
+        events = [json.loads(line[6:]) for line in response.get_data(as_text=True).splitlines() if line.startswith("data: ")]
+        self.assertEqual(events[0], {"content": "直白回应。\n"})
+        self.assertIn("连接提前结束", events[-1]["error"])
+        self.assertFalse(any(event.get("done") for event in events))
+        session = website.CONVERSATIONS[conversation_id]
+        self.assertEqual(session["messages"], initial)
+        self.assertEqual(session["rounds"], 0)
+        self.assertFalse(session["busy"])
+        schedule.assert_not_called()
 
     def test_every_completed_response_schedules_memory_without_waiting_for_eighth_round(self):
         self.client.post("/api/register", json={

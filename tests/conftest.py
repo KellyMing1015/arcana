@@ -1,24 +1,14 @@
-"""Stub cryptography for test environments where it cannot be compiled."""
-import sys
-import types
-import importlib.machinery
+"""Keep pytest's application import away from the real database and model keys.
 
-if "cryptography" not in sys.modules:
-    crypto = types.ModuleType("cryptography")
-    crypto.__spec__ = importlib.machinery.ModuleSpec("cryptography", None)
-    fernet = types.ModuleType("cryptography.fernet")
-    fernet.__spec__ = importlib.machinery.ModuleSpec("cryptography.fernet", None)
+Use the real cryptography dependency from requirements.txt: a plaintext stub
+cannot verify encryption or authentication of stored account settings.
+"""
+import atexit
+import os
+import tempfile
 
-    class _FakeFernet:
-        def __init__(self, key):
-            pass
-        def encrypt(self, data):
-            return data
-        def decrypt(self, data):
-            return data
-
-    fernet.Fernet = _FakeFernet
-    fernet.InvalidToken = Exception
-    crypto.fernet = fernet
-    sys.modules["cryptography"] = crypto
-    sys.modules["cryptography.fernet"] = fernet
+_bootstrap = tempfile.TemporaryDirectory(prefix="arcana-test-bootstrap-")
+atexit.register(_bootstrap.cleanup)
+os.environ["ARCANA_DATABASE"] = os.path.join(_bootstrap.name, "arcana.db")
+for name in ("ARCANA_MEMORY_MODEL_BASE_URL", "ARCANA_MEMORY_MODEL_API_KEY", "ARCANA_MEMORY_MODEL"):
+    os.environ[name] = ""
