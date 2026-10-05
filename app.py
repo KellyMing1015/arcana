@@ -16,6 +16,7 @@ import time
 import uuid
 from datetime import datetime
 from functools import wraps
+from io import BytesIO
 from pathlib import Path
 from threading import Lock
 from urllib.parse import urlsplit
@@ -27,7 +28,7 @@ ROOT = Path(__file__).resolve().parent
 
 def ensure_runtime_dependencies():
     """在旧 VPS 环境首次启动新版代码时补齐新增的运行依赖。"""
-    required_modules = ("flask", "flask_bcrypt", "cryptography", "dotenv")
+    required_modules = ("flask", "flask_bcrypt", "cryptography", "dotenv", "PIL")
     missing = [name for name in required_modules if importlib.util.find_spec(name) is None]
     if not missing:
         return
@@ -60,6 +61,7 @@ from dotenv import load_dotenv
 from cryptography.fernet import Fernet, InvalidToken
 from flask import Flask, Response, jsonify, request, send_from_directory, session as flask_session, stream_with_context
 from flask_bcrypt import Bcrypt
+from PIL import Image, UnidentifiedImageError
 
 from llm import LLMError, friendly_error, iter_chat_text, list_models, open_chat_stream
 import profile_memory
@@ -98,10 +100,21 @@ MAX_CONVERSATIONS = 200
 MAX_FOLLOW_UP_IMAGES = 3
 MAX_IMAGE_BYTES = 1536 * 1024
 MAX_IMAGE_TOTAL_BYTES = 4 * 1024 * 1024
+MAX_AVATAR_BYTES = 64 * 1024
+MAX_AVATAR_REQUEST_BYTES = 128 * 1024
+AVATAR_SIZE = (256, 256)
 CONVERSATIONS = {}
 CONVERSATION_LOCK = Lock()
-PUBLIC_FILES = {"index.html", "app.js", "auth.js", "cards.js", "settings.js", "styles.css"}
+PUBLIC_FILES = {
+    "index.html", "app.js", "auth.js", "cards.js", "settings.js", "home-view.js",
+    "styles.css", "theme.css", "personal.css", "ritual.css", "eclipse.css", "flow.css", "atmosphere.css",
+}
 UI_FILES = {
+    "card-back-eclipse.svg", "card-back-frame.svg", "card-back-engraved.webp", "card-back-symmetric.webp",
+    "observatory-moon.svg", "starfield-night.webp", "starfield-night-sparse.webp",
+    "star-glimmer-a.svg", "star-glimmer-b.svg", "star-glimmer-c.svg",
+    "card-back-night.svg",
+    "celestial-ornament.svg",
     "card-back-cream-magic.png",
     "card-back-cream-magic-v2.png",
     "card-back-cream-magic-v3.png",
@@ -148,6 +161,7 @@ def initialize_database():
                 email TEXT UNIQUE NOT NULL,
                 nickname TEXT NOT NULL,
                 password_hash TEXT NOT NULL,
+                avatar TEXT NOT NULL DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -175,6 +189,9 @@ def initialize_database():
             CREATE INDEX IF NOT EXISTS idx_readings_user_created
             ON readings(user_id, created_at DESC, id DESC);
         """)
+        user_columns = {row["name"] for row in connection.execute("PRAGMA table_info(users)")}
+        if "avatar" not in user_columns:
+            connection.execute("ALTER TABLE users ADD COLUMN avatar TEXT NOT NULL DEFAULT ''")
         columns = {row["name"] for row in connection.execute("PRAGMA table_info(readings)")}
         if "profile_id" not in columns:
             connection.execute("ALTER TABLE readings ADD COLUMN profile_id TEXT")
@@ -244,7 +261,7 @@ def current_user():
         return None
     with database_connection() as connection:
         return connection.execute(
-            "SELECT id, email, nickname, created_at FROM users WHERE id = ?",
+            "SELECT id, email, nickname, avatar, created_at FROM users WHERE id = ?",
             (user_id,),
         ).fetchone()
 
@@ -270,6 +287,7 @@ def user_json(user):
         "id": user["id"],
         "email": user["email"],
         "nickname": user["nickname"],
+        "avatar": user["avatar"] or "",
         "created_at": user["created_at"],
     }
 
@@ -528,7 +546,7 @@ def register():
                 (cursor.lastrowid, encrypt_account_data(account_data)),
             )
             user = connection.execute(
-                "SELECT id, email, nickname, created_at FROM users WHERE id = ?",
+                "SELECT id, email, nickname, avatar, created_at FROM users WHERE id = ?",
                 (cursor.lastrowid,),
             ).fetchone()
     except sqlite3.IntegrityError:
@@ -567,6 +585,65 @@ def login():
 @login_required
 def me(user):
     return jsonify(user=user_json(user))
+
+
+def normalize_avatar(value):
+    """只接受小尺寸 JPEG，并重新编码为不含照片元数据的账号头像。"""
+    if value == "":
+        return ""
+    prefix = "data:image/jpeg;base64,"
+    if not isinstance(value, str) or not value.startswith(prefix):
+        raise ValueError("头像需要是 256 × 256 的 JPG 图片。")
+    encoded = value[len(prefix):]
+    if len(encoded) > ((MAX_AVATAR_BYTES + 2) // 3) * 4:
+        raise ValueError("头像图片不能超过 64 KB。")
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise ValueError("头像图片数据损坏，请重新选择。") from error
+    if not raw or len(raw) > MAX_AVATAR_BYTES:
+        raise ValueError("头像图片不能超过 64 KB。")
+    try:
+        with Image.open(BytesIO(raw)) as source:
+            if source.format != "JPEG" or source.size != AVATAR_SIZE:
+                raise ValueError("头像需要是 256 × 256 的 JPG 图片。")
+            source.load()
+            # 新建像素图而非沿用 source.info，去除 EXIF、ICC 和附带数据。
+            cleaned = Image.new("RGB", AVATAR_SIZE)
+            cleaned.paste(source.convert("RGB"))
+            output = BytesIO()
+            cleaned.save(output, format="JPEG", quality=85, optimize=True)
+    except (UnidentifiedImageError, OSError, SyntaxError, Image.DecompressionBombError) as error:
+        raise ValueError("头像图片数据损坏，请重新选择。") from error
+    canonical = output.getvalue()
+    if len(canonical) > MAX_AVATAR_BYTES:
+        raise ValueError("头像图片不能超过 64 KB。")
+    return prefix + base64.b64encode(canonical).decode("ascii")
+
+
+@app.route("/api/avatar", methods=["PUT", "OPTIONS"])
+@login_required
+def update_avatar(user):
+    if request.content_length is not None and request.content_length > MAX_AVATAR_REQUEST_BYTES:
+        return jsonify(error="头像请求太大，请重新选择图片。"), 413
+    raw_payload = request.stream.read(MAX_AVATAR_REQUEST_BYTES + 1)
+    if len(raw_payload) > MAX_AVATAR_REQUEST_BYTES:
+        return jsonify(error="头像请求太大，请重新选择图片。"), 413
+    try:
+        payload = json.loads(raw_payload) if request.is_json else None
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        payload = None
+    if not isinstance(payload, dict):
+        return jsonify(error="请选择一张头像图片。"), 400
+    if "userId" in payload and (type(payload["userId"]) is not int or payload["userId"] != user["id"]):
+        return jsonify(error="账号状态发生变化，请重新选择头像。"), 409
+    try:
+        avatar = normalize_avatar(payload.get("avatar"))
+    except ValueError as error:
+        return jsonify(error=str(error)), 400
+    with database_connection() as connection:
+        connection.execute("UPDATE users SET avatar = ? WHERE id = ?", (avatar, user["id"]))
+    return jsonify(success=True, avatar=avatar)
 
 
 @app.route("/api/account-data", methods=["GET", "PUT", "OPTIONS"])

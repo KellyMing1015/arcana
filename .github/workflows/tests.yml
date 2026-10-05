@@ -31,10 +31,10 @@ jobs:
         env:
           ARCANA_DATABASE: ${{ runner.temp }}/arcana-test-bootstrap.db
         run: python -m unittest discover -s tests -v
-      - name: Check frontend slow image loads and retry limits
-        run: node --test tests/test_frontend_reliability.mjs
+      - name: Check frontend image loads, streaming and account flows
+        run: node --test tests/test_frontend_*.mjs
       - name: Check browser script syntax
         run: |
-          for script in app.js auth.js cards.js settings.js; do
+          for script in app.js auth.js cards.js settings.js home-view.js; do
             node --input-type=module --check < "$script"
           done

@@ -1,0 +1,54 @@
+/* A deep night with independent, slowly changing points of astronomical light. */
+:root {
+  --eclipse-edge-rest: 0 0 22px #d4d9ef12,inset 0 0 16px #d4d9ef04;
+  --eclipse-edge-active: 0 0 30px #d4d9ef29,inset 0 0 18px #d4d9ef08;
+  --night-sky-image: url('/assets/ui/starfield-night-sparse.webp');
+}
+body::before { background:linear-gradient(#05050626,#05050655),var(--night-sky-image) center/cover no-repeat; opacity:.68; }
+body::after { display:none; }
+.night-sky { position:fixed; inset:0; z-index:0; pointer-events:none; }
+.night-sky-glimmer { position:absolute; inset:0; background:var(--night-sky-image) center/cover no-repeat; mask-position:center; mask-size:cover; mask-repeat:no-repeat; filter:brightness(1.65); mix-blend-mode:screen; opacity:.04; animation:stellar-glimmer 9s ease-in-out infinite; }
+.night-sky-glimmer-a { mask-image:url('/assets/ui/star-glimmer-a.svg'); animation-delay:-2.4s; }
+.night-sky-glimmer-b { mask-image:url('/assets/ui/star-glimmer-b.svg'); animation-duration:13s; animation-delay:-6.1s; }
+.night-sky-glimmer-c { mask-image:url('/assets/ui/star-glimmer-c.svg'); animation-duration:17s; animation-delay:-11.2s; }
+@keyframes stellar-glimmer { 0%,100% { opacity:.025; } 45% { opacity:.6; } 70% { opacity:.13; } }
+.settings-overlay,.account-overlay { isolation:isolate; background:linear-gradient(#05050666,#05050699),var(--night-sky-image) center/cover no-repeat fixed; }
+.settings-overlay::before,.settings-overlay::after,.account-overlay::before,.account-overlay::after { content:""; position:fixed; inset:0; z-index:0; pointer-events:none; background:var(--night-sky-image) center/cover no-repeat; mask-position:center; mask-size:cover; mask-repeat:no-repeat; filter:brightness(1.65); mix-blend-mode:screen; opacity:.04; animation:stellar-glimmer 9s ease-in-out infinite; }
+.settings-overlay::before,.account-overlay::before { mask-image:url('/assets/ui/star-glimmer-a.svg'); animation-delay:-2.4s; }
+.settings-overlay::after,.account-overlay::after { mask-image:url('/assets/ui/star-glimmer-b.svg'); animation-duration:13s; animation-delay:-6.1s; }
+.settings-page,.auth-page { position:relative; z-index:1; }
+.eclipse-moon-art { opacity:1; filter:grayscale(1) brightness(.9); }
+.eclipse-limb { border-color:#dedfec66; box-shadow:-7px 0 28px #e3e8ff19,0 0 50px #c6cee408; }
+.eclipse-reticle { stroke:#8e91a1; opacity:.43; }
+.eclipse-form .ritual-spread,
+.personal-entry,
+.history-entry .history-bubble,
+.profile-note { background-color:#18181c; box-shadow:var(--eclipse-edge-rest); border-color:#666671; }
+.eclipse-form .ritual-spread.active { background-color:#222229; border-color:#e4e4ed; box-shadow:var(--eclipse-edge-active); }
+.eclipse-form .ritual-spread:hover,
+.personal-entry:hover,
+.history-entry .history-bubble:focus-within,
+.profile-note:focus-within { border-color:#c4c6d4; box-shadow:var(--eclipse-edge-active); }
+.ritual-primary,.settings-primary,.account-primary { box-shadow:0 0 24px #e9edff14; }
+.eclipse-conversation .conversation-compose { border-color:#7c7d8c70; box-shadow:0 0 24px #d4d9ef0d; }
+.eclipse-conversation .conversation-compose:focus-within { border-color:#bfc2d1; box-shadow:var(--eclipse-edge-active); }
+.eclipse-question-line { position:relative; }
+.eclipse-input-sign { position:absolute; right:3px; bottom:14px; width:19px; height:19px; color:#b6b8c7; pointer-events:none; transition:color .2s,filter .2s; }
+.eclipse-home .eclipse-form .question-center-input { padding-right:33px; border-bottom-color:#a6a8b8; background:linear-gradient(transparent,#e4e8fc04); }
+.eclipse-question-line:focus-within .eclipse-input-sign { color:#f5f4fa; filter:drop-shadow(0 0 7px #e9eaff80); }
+.eclipse-form h1 { margin-bottom:24px; }
+.ritual-step,.ritual-instruction small,.cut-count,.tray-item small { color:#b4b6c4; }
+body:has(.ritual-screen:not(.question-screen)) .site-footer { display:none; }
+/* A caption cannot reveal the card orientation through a directional shadow. */
+.fan-card { box-shadow:0 0 18px #0009; }
+.fan-card::before { inset:5px; box-shadow:0 0 22px #ececff28; }
+.reading-drawer-content { border-top:0; }
+@media (max-width:700px) {
+ .eclipse-form h1 { margin-bottom:24px; }
+ .result-screen.eclipse-result .reading-output { padding-bottom:18px; }
+ .result-screen.eclipse-result .result-actions { position:static; bottom:auto; margin:0; padding:20px 0 22px; background:transparent; }
+ .result-screen.eclipse-result .result-actions::before { display:none; }
+ .result-screen.eclipse-result-10 .result-layout-10 :is(.result-card-1,.result-card-2) .result-card-label span { position:static; }
+ .result-screen.eclipse-result-10 .result-layout-10 .result-card-3 { margin-top:30px; }
+}
+@media (prefers-reduced-motion:reduce) { .night-sky-glimmer,.settings-overlay::before,.settings-overlay::after,.account-overlay::before,.account-overlay::after { animation:none; opacity:.16; } .eclipse-limb { animation:none; } }

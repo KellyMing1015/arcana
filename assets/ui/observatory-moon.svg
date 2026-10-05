@@ -1,0 +1,233 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="42 42 516 516" fill="none" color-interpolation="sRGB" color-interpolation-filters="sRGB">
+<defs>
+  <clipPath id="lunar-disc"><circle cx="300" cy="300" r="244"/></clipPath>
+  <radialGradient id="lunar-base" cx=".24" cy=".25" r=".88">
+    <stop stop-color="#d4d4d4"/><stop offset=".38" stop-color="#b0b0b0"/><stop offset=".7" stop-color="#7b7b7b"/><stop offset="1" stop-color="#3d3d3d"/>
+  </radialGradient>
+  <radialGradient id="lunar-limb" cx=".33" cy=".3" r=".7">
+    <stop offset=".55" stop-color="#0b0b0b" stop-opacity="0"/><stop offset=".87" stop-color="#0b0b0b" stop-opacity=".08"/><stop offset="1" stop-color="#0b0b0b" stop-opacity=".68"/>
+  </radialGradient>
+  <radialGradient id="umbra" cx=".58" cy=".34" r=".68">
+    <stop offset="0" stop-color="#080808" stop-opacity=".985"/>
+    <stop offset=".25" stop-color="#080808" stop-opacity=".98"/>
+    <stop offset=".35" stop-color="#080808" stop-opacity=".975"/>
+    <stop offset=".45" stop-color="#080808" stop-opacity=".965"/>
+    <stop offset=".5" stop-color="#080808" stop-opacity=".95"/>
+    <stop offset=".55" stop-color="#080808" stop-opacity=".925"/>
+    <stop offset=".6" stop-color="#080808" stop-opacity=".88"/>
+    <stop offset=".65" stop-color="#080808" stop-opacity=".795"/>
+    <stop offset=".7" stop-color="#080808" stop-opacity=".675"/>
+    <stop offset=".75" stop-color="#080808" stop-opacity=".52"/>
+    <stop offset=".8" stop-color="#080808" stop-opacity=".35"/>
+    <stop offset=".85" stop-color="#080808" stop-opacity=".19"/>
+    <stop offset=".9" stop-color="#080808" stop-opacity=".07"/>
+    <stop offset=".95" stop-color="#080808" stop-opacity=".012"/>
+    <stop offset="1" stop-color="#080808" stop-opacity="0"/>
+  </radialGradient>
+  <linearGradient id="lower-shade" x1="300" y1="320" x2="300" y2="545" gradientUnits="userSpaceOnUse">
+    <stop stop-color="#0b0b0b" stop-opacity="0"/><stop offset=".48" stop-color="#0b0b0b" stop-opacity=".23"/><stop offset="1" stop-color="#0b0b0b" stop-opacity=".96"/>
+  </linearGradient>
+  <radialGradient id="crater-bowl" cx=".66" cy=".68" r=".72">
+    <stop stop-color="#404040" stop-opacity=".07"/><stop offset=".64" stop-color="#434343" stop-opacity=".21"/><stop offset=".93" stop-color="#494949" stop-opacity=".56"/><stop offset="1" stop-color="#d9d9d9" stop-opacity=".43"/>
+  </radialGradient>
+  <filter id="mottled" x="-5%" y="-5%" width="110%" height="110%" color-interpolation-filters="sRGB">
+    <feTurbulence type="fractalNoise" baseFrequency=".025" numOctaves="5" seed="21" result="mottle"/>
+    <feColorMatrix in="mottle" type="saturate" values="0" result="grey-mottle"/>
+    <feComponentTransfer in="grey-mottle" result="lunar-mottle"><feFuncR type="linear" slope=".45" intercept=".52"/><feFuncG type="linear" slope=".45" intercept=".52"/><feFuncB type="linear" slope=".45" intercept=".52"/></feComponentTransfer>
+    <feBlend in="SourceGraphic" in2="lunar-mottle" mode="multiply"/>
+  </filter>
+  <filter id="dust" color-interpolation-filters="sRGB">
+    <feTurbulence type="fractalNoise" baseFrequency=".73" numOctaves="3" seed="8"/>
+    <feColorMatrix type="saturate" values="0"/>
+    <feComponentTransfer><feFuncA type="linear" slope=".19"/></feComponentTransfer>
+    <feComposite in2="SourceGraphic" operator="in"/>
+  </filter>
+  <filter id="mare-soft"><feGaussianBlur stdDeviation="6"/></filter>
+  <filter id="ray-soft"><feGaussianBlur stdDeviation=".6"/></filter>
+  <filter id="shadow-soft"><feGaussianBlur stdDeviation="7"/></filter>
+  <filter id="silver-only" x="-5%" y="-5%" width="110%" height="110%" color-interpolation-filters="sRGB"><feColorMatrix type="saturate" values="0"/></filter>
+</defs>
+<g filter="url(#silver-only)">
+<g clip-path="url(#lunar-disc)">
+  <circle cx="300" cy="300" r="244" fill="url(#lunar-base)" filter="url(#mottled)"/>
+  <!-- Broad volcanic plains: irregular, low-contrast shapes beneath the crater relief. -->
+  <g fill="#585858" opacity=".45" filter="url(#mare-soft)">
+    <path d="M158 137c19-17 36-19 55-13 19 7 41-1 61 5 20 7 38 24 38 46 0 21-11 48-33 47-17-1-24 9-43 2-11-4-21-20-37-24-30-8-55-21-41-63Z"/>
+    <path d="M123 205c26-21 52-25 72-13 13 8 18 23 29 31 8 7 24 15 18 29-8 17-30 11-43 24-14 14-7 31-27 40-23 10-38-1-53-15-15-15-25-36-20-55 3-13 12-31 24-41Z"/>
+    <path d="M292 114c22-15 43-19 65-9 21 10 33 21 35 40 2 14-4 29-15 36-14 10-33 20-49 12-16-8-25-16-34-30-12-18-13-30-2-49Z"/>
+    <path d="M309 222c12-15 35-26 53-19 19 7 31 20 42 26 21 13 41 34 29 60-8 15-25 32-44 34-19 1-37-11-56-10-17 1-40 5-48-12-11-25 5-55 24-79Z"/>
+    <path d="M194 319c20-15 33-19 56-15 28 6 57 16 64 39 5 15-2 32-19 37-16 4-28-4-42 2-22 9-37 16-59-4-14-13-22-42 0-59Z"/>
+  </g>
+  <g fill="#e6e6e6" opacity=".16" filter="url(#mare-soft)">
+    <path d="M67 262c28-44 41-72 61-81-3 27 10 36-1 57-12 25-5 56-21 70-20 17-31 49-38 39-5-14-7-60-1-85Z"/>
+    <path d="M129 317c22 6 31 22 33 48 1 32 28 40 50 58-8 17-23 7-38 8-32 4-56-30-64-44-13-22-6-49 19-70Z"/>
+    <path d="M198 94c23-17 44-23 63-21 14 3 23 11 36 10-9 21-26 29-45 22-17-6-39 5-54-11Z"/>
+    <path d="M285 392c33-20 70-26 99-15 15 6 26 18 13 29-16 14-28 12-41 23-14 14-25 38-48 32-30-8-36-42-23-69Z"/>
+  </g>
+  <g stroke="#dddddd" stroke-opacity=".18" stroke-width=".65" filter="url(#ray-soft)">
+    <path d="M231 304l-107-18M231 304l-54-100M231 304l32-130M231 304l105-67M231 304l85 45M231 304l-18 117M231 304l-92 66"/>
+    <path d="M279 432l-68-61M279 432l-63-140M279 432l42-150M279 432l118-102M279 432l122 17M279 432l-99 47M279 432l-46 77M279 432l66 66"/>
+  </g>
+<g opacity="0.44"><ellipse cx="322.6" cy="227.5" rx="4.1" ry="4.5" fill="url(#crater-bowl)"/><path d="M318.5 227.5a4.1 4.5 0 0 1 6.6 -3.4" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.44"><ellipse cx="260.3" cy="522.7" rx="1.4" ry="1.3" fill="url(#crater-bowl)"/><path d="M258.9 522.7a1.4 1.3 0 0 1 2.2 -1.0" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.47"><ellipse cx="350.7" cy="262.2" rx="3.9" ry="3.6" fill="url(#crater-bowl)"/><path d="M346.8 262.2a3.9 3.6 0 0 1 6.3 -2.7" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.42"><ellipse cx="256.8" cy="437.6" rx="2.9" ry="3.5" fill="url(#crater-bowl)"/><path d="M253.9 437.6a2.9 3.5 0 0 1 4.7 -2.6" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.60"><ellipse cx="305.6" cy="168.3" rx="2.9" ry="2.7" fill="url(#crater-bowl)"/><path d="M302.7 168.3a2.9 2.7 0 0 1 4.7 -2.0" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.61"><ellipse cx="420.7" cy="340.9" rx="3.5" ry="3.8" fill="url(#crater-bowl)"/><path d="M417.2 340.9a3.5 3.8 0 0 1 5.6 -2.8" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.46"><ellipse cx="237.6" cy="130.4" rx="1.5" ry="1.4" fill="url(#crater-bowl)"/><path d="M236.1 130.4a1.5 1.4 0 0 1 2.4 -1.0" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.43"><ellipse cx="260.1" cy="373.0" rx="3.3" ry="3.1" fill="url(#crater-bowl)"/><path d="M256.8 373.0a3.3 3.1 0 0 1 5.4 -2.3" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.38"><ellipse cx="476.2" cy="393.6" rx="5.4" ry="5.8" fill="url(#crater-bowl)"/><path d="M470.9 393.6a5.4 5.8 0 0 1 8.7 -4.3" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.65"><ellipse cx="405.5" cy="422.1" rx="1.8" ry="2.3" fill="url(#crater-bowl)"/><path d="M403.7 422.1a1.8 2.3 0 0 1 3.0 -1.8" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.39"><ellipse cx="511.0" cy="307.0" rx="0.9" ry="1.0" fill="url(#crater-bowl)"/><path d="M510.1 307.0a0.9 1.0 0 0 1 1.4 -0.7" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.61"><ellipse cx="299.9" cy="124.6" rx="1.3" ry="1.2" fill="url(#crater-bowl)"/><path d="M298.7 124.6a1.3 1.2 0 0 1 2.0 -0.9" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.43"><ellipse cx="471.8" cy="159.8" rx="4.0" ry="3.3" fill="url(#crater-bowl)"/><path d="M467.8 159.8a4.0 3.3 0 0 1 6.6 -2.5" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.43"><ellipse cx="479.3" cy="423.1" rx="3.9" ry="3.6" fill="url(#crater-bowl)"/><path d="M475.4 423.1a3.9 3.6 0 0 1 6.3 -2.7" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.65"><ellipse cx="387.1" cy="433.4" rx="1.1" ry="1.1" fill="url(#crater-bowl)"/><path d="M385.9 433.4a1.1 1.1 0 0 1 1.8 -0.8" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.66"><ellipse cx="200.4" cy="381.6" rx="2.6" ry="2.8" fill="url(#crater-bowl)"/><path d="M197.8 381.6a2.6 2.8 0 0 1 4.3 -2.1" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.56"><ellipse cx="374.3" cy="248.0" rx="1.5" ry="1.6" fill="url(#crater-bowl)"/><path d="M372.8 248.0a1.5 1.6 0 0 1 2.4 -1.2" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.56"><ellipse cx="273.2" cy="169.4" rx="2.2" ry="1.7" fill="url(#crater-bowl)"/><path d="M271.0 169.4a2.2 1.7 0 0 1 3.6 -1.3" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.52"><ellipse cx="371.6" cy="143.6" rx="1.1" ry="0.9" fill="url(#crater-bowl)"/><path d="M370.5 143.6a1.1 0.9 0 0 1 1.9 -0.7" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.43"><ellipse cx="521.6" cy="282.9" rx="1.9" ry="2.1" fill="url(#crater-bowl)"/><path d="M519.6 282.9a1.9 2.1 0 0 1 3.1 -1.6" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.40"><ellipse cx="120.0" cy="395.2" rx="3.7" ry="3.0" fill="url(#crater-bowl)"/><path d="M116.3 395.2a3.7 3.0 0 0 1 6.0 -2.3" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.40"><ellipse cx="238.8" cy="449.4" rx="1.7" ry="2.0" fill="url(#crater-bowl)"/><path d="M237.1 449.4a1.7 2.0 0 0 1 2.8 -1.5" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.40"><ellipse cx="374.8" cy="410.3" rx="4.8" ry="3.6" fill="url(#crater-bowl)"/><path d="M370.0 410.3a4.8 3.6 0 0 1 7.8 -2.7" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.60"><ellipse cx="422.4" cy="169.5" rx="1.4" ry="1.7" fill="url(#crater-bowl)"/><path d="M421.0 169.5a1.4 1.7 0 0 1 2.2 -1.3" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.62"><ellipse cx="237.5" cy="374.6" rx="3.7" ry="3.5" fill="url(#crater-bowl)"/><path d="M233.8 374.6a3.7 3.5 0 0 1 6.0 -2.6" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.45"><ellipse cx="397.7" cy="444.4" rx="3.8" ry="4.3" fill="url(#crater-bowl)"/><path d="M393.9 444.4a3.8 4.3 0 0 1 6.2 -3.2" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.31"><ellipse cx="392.4" cy="227.8" rx="5.2" ry="4.3" fill="url(#crater-bowl)"/><path d="M387.2 227.8a5.2 4.3 0 0 1 8.4 -3.2" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.51"><ellipse cx="426.1" cy="396.8" rx="1.6" ry="1.8" fill="url(#crater-bowl)"/><path d="M424.5 396.8a1.6 1.8 0 0 1 2.7 -1.4" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.43"><ellipse cx="354.7" cy="93.2" rx="4.0" ry="4.8" fill="url(#crater-bowl)"/><path d="M350.6 93.2a4.0 4.8 0 0 1 6.5 -3.6" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.63"><ellipse cx="204.3" cy="474.3" rx="1.9" ry="2.1" fill="url(#crater-bowl)"/><path d="M202.5 474.3a1.9 2.1 0 0 1 3.0 -1.6" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.61"><ellipse cx="402.7" cy="179.2" rx="3.5" ry="3.4" fill="url(#crater-bowl)"/><path d="M399.2 179.2a3.5 3.4 0 0 1 5.7 -2.5" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.60"><ellipse cx="382.2" cy="485.1" rx="2.4" ry="2.5" fill="url(#crater-bowl)"/><path d="M379.8 485.1a2.4 2.5 0 0 1 3.8 -1.9" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.34"><ellipse cx="395.2" cy="367.2" rx="2.7" ry="2.3" fill="url(#crater-bowl)"/><path d="M392.6 367.2a2.7 2.3 0 0 1 4.3 -1.7" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.43"><ellipse cx="357.8" cy="205.6" rx="1.8" ry="1.9" fill="url(#crater-bowl)"/><path d="M355.9 205.6a1.8 1.9 0 0 1 3.0 -1.4" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.58"><ellipse cx="304.3" cy="141.6" rx="1.1" ry="1.0" fill="url(#crater-bowl)"/><path d="M303.2 141.6a1.1 1.0 0 0 1 1.9 -0.8" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.34"><ellipse cx="426.8" cy="434.8" rx="3.7" ry="3.3" fill="url(#crater-bowl)"/><path d="M423.1 434.8a3.7 3.3 0 0 1 5.9 -2.5" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.56"><ellipse cx="406.3" cy="410.5" rx="4.2" ry="3.5" fill="url(#crater-bowl)"/><path d="M402.1 410.5a4.2 3.5 0 0 1 6.8 -2.6" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.38"><ellipse cx="315.8" cy="473.5" rx="3.2" ry="4.0" fill="url(#crater-bowl)"/><path d="M312.6 473.5a3.2 4.0 0 0 1 5.2 -3.0" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.40"><ellipse cx="222.6" cy="234.2" rx="1.7" ry="1.7" fill="url(#crater-bowl)"/><path d="M220.9 234.2a1.7 1.7 0 0 1 2.8 -1.3" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.48"><ellipse cx="186.5" cy="121.2" rx="3.6" ry="3.1" fill="url(#crater-bowl)"/><path d="M182.9 121.2a3.6 3.1 0 0 1 5.8 -2.3" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.62"><ellipse cx="347.4" cy="524.5" rx="4.3" ry="5.7" fill="url(#crater-bowl)"/><path d="M343.2 524.5a4.3 5.7 0 0 1 6.9 -4.3" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.46"><ellipse cx="170.7" cy="158.3" rx="2.8" ry="2.9" fill="url(#crater-bowl)"/><path d="M167.9 158.3a2.8 2.9 0 0 1 4.5 -2.2" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.67"><ellipse cx="319.6" cy="319.3" rx="1.1" ry="1.0" fill="url(#crater-bowl)"/><path d="M318.5 319.3a1.1 1.0 0 0 1 1.7 -0.8" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.54"><ellipse cx="231.5" cy="182.4" rx="3.6" ry="5.0" fill="url(#crater-bowl)"/><path d="M227.8 182.4a3.6 5.0 0 0 1 5.9 -3.8" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.52"><ellipse cx="412.5" cy="186.3" rx="2.8" ry="3.4" fill="url(#crater-bowl)"/><path d="M409.8 186.3a2.8 3.4 0 0 1 4.5 -2.5" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.44"><ellipse cx="105.6" cy="342.4" rx="5.8" ry="4.8" fill="url(#crater-bowl)"/><path d="M99.8 342.4a5.8 4.8 0 0 1 9.4 -3.6" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.68"><ellipse cx="370.0" cy="294.1" rx="3.8" ry="4.1" fill="url(#crater-bowl)"/><path d="M366.3 294.1a3.8 4.1 0 0 1 6.1 -3.1" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.69"><ellipse cx="199.8" cy="387.5" rx="2.8" ry="3.1" fill="url(#crater-bowl)"/><path d="M197.0 387.5a2.8 3.1 0 0 1 4.5 -2.4" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.67"><ellipse cx="401.4" cy="352.5" rx="3.3" ry="2.5" fill="url(#crater-bowl)"/><path d="M398.0 352.5a3.3 2.5 0 0 1 5.4 -1.9" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.63"><ellipse cx="238.0" cy="176.0" rx="1.1" ry="0.8" fill="url(#crater-bowl)"/><path d="M236.9 176.0a1.1 0.8 0 0 1 1.7 -0.6" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.44"><ellipse cx="87.7" cy="225.1" rx="4.2" ry="4.8" fill="url(#crater-bowl)"/><path d="M83.5 225.1a4.2 4.8 0 0 1 6.9 -3.6" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.45"><ellipse cx="290.0" cy="383.2" rx="2.4" ry="2.4" fill="url(#crater-bowl)"/><path d="M287.6 383.2a2.4 2.4 0 0 1 3.9 -1.8" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.41"><ellipse cx="388.7" cy="482.2" rx="3.0" ry="3.8" fill="url(#crater-bowl)"/><path d="M385.7 482.2a3.0 3.8 0 0 1 4.8 -2.8" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.59"><ellipse cx="393.1" cy="412.9" rx="2.8" ry="2.9" fill="url(#crater-bowl)"/><path d="M390.3 412.9a2.8 2.9 0 0 1 4.5 -2.2" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.55"><ellipse cx="276.2" cy="363.5" rx="2.6" ry="3.2" fill="url(#crater-bowl)"/><path d="M273.6 363.5a2.6 3.2 0 0 1 4.2 -2.4" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.32"><ellipse cx="219.9" cy="131.2" rx="3.1" ry="4.2" fill="url(#crater-bowl)"/><path d="M216.7 131.2a3.1 4.2 0 0 1 5.1 -3.1" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.67"><ellipse cx="376.3" cy="283.5" rx="2.1" ry="1.8" fill="url(#crater-bowl)"/><path d="M374.2 283.5a2.1 1.8 0 0 1 3.4 -1.3" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.31"><ellipse cx="429.5" cy="426.7" rx="5.8" ry="5.7" fill="url(#crater-bowl)"/><path d="M423.6 426.7a5.8 5.7 0 0 1 9.5 -4.3" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.53"><ellipse cx="230.5" cy="122.2" rx="3.0" ry="3.0" fill="url(#crater-bowl)"/><path d="M227.4 122.2a3.0 3.0 0 0 1 4.9 -2.3" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.31"><ellipse cx="217.1" cy="92.7" rx="3.5" ry="3.6" fill="url(#crater-bowl)"/><path d="M213.6 92.7a3.5 3.6 0 0 1 5.6 -2.7" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.45"><ellipse cx="453.7" cy="136.4" rx="1.7" ry="1.6" fill="url(#crater-bowl)"/><path d="M451.9 136.4a1.7 1.6 0 0 1 2.8 -1.2" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.66"><ellipse cx="486.7" cy="307.7" rx="1.0" ry="1.1" fill="url(#crater-bowl)"/><path d="M485.7 307.7a1.0 1.1 0 0 1 1.7 -0.8" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.38"><ellipse cx="418.2" cy="328.9" rx="4.8" ry="4.7" fill="url(#crater-bowl)"/><path d="M413.4 328.9a4.8 4.7 0 0 1 7.8 -3.6" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.51"><ellipse cx="498.2" cy="318.4" rx="4.4" ry="3.7" fill="url(#crater-bowl)"/><path d="M493.9 318.4a4.4 3.7 0 0 1 7.0 -2.7" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.52"><ellipse cx="76.3" cy="304.7" rx="1.5" ry="1.9" fill="url(#crater-bowl)"/><path d="M74.7 304.7a1.5 1.9 0 0 1 2.5 -1.4" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.50"><ellipse cx="91.1" cy="377.4" rx="5.0" ry="4.7" fill="url(#crater-bowl)"/><path d="M86.1 377.4a5.0 4.7 0 0 1 8.1 -3.5" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.69"><ellipse cx="238.1" cy="315.2" rx="4.4" ry="3.7" fill="url(#crater-bowl)"/><path d="M233.8 315.2a4.4 3.7 0 0 1 7.1 -2.8" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.58"><ellipse cx="527.7" cy="264.1" rx="2.6" ry="2.3" fill="url(#crater-bowl)"/><path d="M525.1 264.1a2.6 2.3 0 0 1 4.2 -1.8" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.49"><ellipse cx="398.2" cy="259.6" rx="2.2" ry="1.8" fill="url(#crater-bowl)"/><path d="M396.1 259.6a2.2 1.8 0 0 1 3.5 -1.3" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.60"><ellipse cx="191.6" cy="159.0" rx="4.8" ry="4.1" fill="url(#crater-bowl)"/><path d="M186.8 159.0a4.8 4.1 0 0 1 7.8 -3.0" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.65"><ellipse cx="335.6" cy="481.5" rx="4.8" ry="5.0" fill="url(#crater-bowl)"/><path d="M330.8 481.5a4.8 5.0 0 0 1 7.7 -3.8" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.42"><ellipse cx="345.5" cy="413.9" rx="2.2" ry="2.3" fill="url(#crater-bowl)"/><path d="M343.4 413.9a2.2 2.3 0 0 1 3.5 -1.7" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.54"><ellipse cx="92.7" cy="254.6" rx="1.4" ry="1.1" fill="url(#crater-bowl)"/><path d="M91.3 254.6a1.4 1.1 0 0 1 2.2 -0.8" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.41"><ellipse cx="115.0" cy="210.5" rx="3.6" ry="4.0" fill="url(#crater-bowl)"/><path d="M111.4 210.5a3.6 4.0 0 0 1 5.8 -3.0" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.45"><ellipse cx="102.8" cy="355.9" rx="2.8" ry="3.0" fill="url(#crater-bowl)"/><path d="M100.0 355.9a2.8 3.0 0 0 1 4.5 -2.3" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.56"><ellipse cx="340.2" cy="238.6" rx="1.9" ry="1.9" fill="url(#crater-bowl)"/><path d="M338.3 238.6a1.9 1.9 0 0 1 3.1 -1.4" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.32"><ellipse cx="410.6" cy="188.0" rx="2.4" ry="2.8" fill="url(#crater-bowl)"/><path d="M408.2 188.0a2.4 2.8 0 0 1 3.9 -2.1" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.59"><ellipse cx="296.6" cy="134.9" rx="1.9" ry="2.0" fill="url(#crater-bowl)"/><path d="M294.7 134.9a1.9 2.0 0 0 1 3.0 -1.5" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.67"><ellipse cx="357.0" cy="189.5" rx="3.1" ry="3.3" fill="url(#crater-bowl)"/><path d="M354.0 189.5a3.1 3.3 0 0 1 4.9 -2.5" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.37"><ellipse cx="348.4" cy="498.3" rx="1.9" ry="1.5" fill="url(#crater-bowl)"/><path d="M346.5 498.3a1.9 1.5 0 0 1 3.0 -1.1" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.59"><ellipse cx="166.5" cy="242.1" rx="2.1" ry="2.7" fill="url(#crater-bowl)"/><path d="M164.4 242.1a2.1 2.7 0 0 1 3.4 -2.0" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.38"><ellipse cx="258.5" cy="176.3" rx="3.5" ry="3.9" fill="url(#crater-bowl)"/><path d="M254.9 176.3a3.5 3.9 0 0 1 5.7 -3.0" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.69"><ellipse cx="166.6" cy="472.4" rx="1.0" ry="1.1" fill="url(#crater-bowl)"/><path d="M165.6 472.4a1.0 1.1 0 0 1 1.7 -0.8" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.50"><ellipse cx="346.8" cy="192.7" rx="2.6" ry="2.5" fill="url(#crater-bowl)"/><path d="M344.2 192.7a2.6 2.5 0 0 1 4.3 -1.9" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.63"><ellipse cx="163.8" cy="372.8" rx="2.5" ry="2.4" fill="url(#crater-bowl)"/><path d="M161.3 372.8a2.5 2.4 0 0 1 4.0 -1.8" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.62"><ellipse cx="269.7" cy="294.4" rx="3.4" ry="3.5" fill="url(#crater-bowl)"/><path d="M266.3 294.4a3.4 3.5 0 0 1 5.4 -2.6" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.59"><ellipse cx="139.0" cy="329.9" rx="3.9" ry="3.5" fill="url(#crater-bowl)"/><path d="M135.0 329.9a3.9 3.5 0 0 1 6.4 -2.6" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.47"><ellipse cx="173.1" cy="159.5" rx="4.7" ry="4.1" fill="url(#crater-bowl)"/><path d="M168.4 159.5a4.7 4.1 0 0 1 7.7 -3.1" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.43"><ellipse cx="419.1" cy="338.7" rx="1.0" ry="1.1" fill="url(#crater-bowl)"/><path d="M418.1 338.7a1.0 1.1 0 0 1 1.6 -0.9" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.68"><ellipse cx="389.7" cy="393.2" rx="1.2" ry="1.6" fill="url(#crater-bowl)"/><path d="M388.5 393.2a1.2 1.6 0 0 1 1.9 -1.2" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.60"><ellipse cx="308.4" cy="312.8" rx="4.4" ry="4.1" fill="url(#crater-bowl)"/><path d="M304.0 312.8a4.4 4.1 0 0 1 7.2 -3.1" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.40"><ellipse cx="325.1" cy="152.6" rx="1.5" ry="1.4" fill="url(#crater-bowl)"/><path d="M323.6 152.6a1.5 1.4 0 0 1 2.4 -1.1" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.52"><ellipse cx="132.8" cy="260.2" rx="4.7" ry="4.1" fill="url(#crater-bowl)"/><path d="M128.1 260.2a4.7 4.1 0 0 1 7.6 -3.0" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.60"><ellipse cx="486.4" cy="432.3" rx="2.1" ry="2.0" fill="url(#crater-bowl)"/><path d="M484.4 432.3a2.1 2.0 0 0 1 3.4 -1.5" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.57"><ellipse cx="463.0" cy="155.5" rx="4.6" ry="5.1" fill="url(#crater-bowl)"/><path d="M458.4 155.5a4.6 5.1 0 0 1 7.5 -3.8" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.54"><ellipse cx="398.7" cy="501.9" rx="4.5" ry="3.7" fill="url(#crater-bowl)"/><path d="M394.2 501.9a4.5 3.7 0 0 1 7.3 -2.7" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.58"><ellipse cx="254.6" cy="105.8" rx="1.2" ry="0.9" fill="url(#crater-bowl)"/><path d="M253.4 105.8a1.2 0.9 0 0 1 1.9 -0.7" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.32"><ellipse cx="163.5" cy="395.0" rx="1.5" ry="1.3" fill="url(#crater-bowl)"/><path d="M162.1 395.0a1.5 1.3 0 0 1 2.4 -1.0" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.36"><ellipse cx="112.9" cy="331.9" rx="4.1" ry="4.4" fill="url(#crater-bowl)"/><path d="M108.8 331.9a4.1 4.4 0 0 1 6.6 -3.3" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.53"><ellipse cx="84.1" cy="316.1" rx="4.3" ry="5.3" fill="url(#crater-bowl)"/><path d="M79.8 316.1a4.3 5.3 0 0 1 7.0 -4.0" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.31"><ellipse cx="308.0" cy="295.3" rx="4.7" ry="4.5" fill="url(#crater-bowl)"/><path d="M303.4 295.3a4.7 4.5 0 0 1 7.6 -3.4" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.61"><ellipse cx="523.0" cy="304.7" rx="1.5" ry="1.6" fill="url(#crater-bowl)"/><path d="M521.5 304.7a1.5 1.6 0 0 1 2.4 -1.2" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.38"><ellipse cx="214.9" cy="403.6" rx="4.9" ry="4.8" fill="url(#crater-bowl)"/><path d="M210.1 403.6a4.9 4.8 0 0 1 7.9 -3.6" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.36"><ellipse cx="253.4" cy="90.7" rx="4.4" ry="3.4" fill="url(#crater-bowl)"/><path d="M249.0 90.7a4.4 3.4 0 0 1 7.2 -2.6" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.50"><ellipse cx="205.3" cy="140.8" rx="3.6" ry="4.1" fill="url(#crater-bowl)"/><path d="M201.7 140.8a3.6 4.1 0 0 1 5.9 -3.1" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.50"><ellipse cx="241.4" cy="265.1" rx="3.9" ry="4.4" fill="url(#crater-bowl)"/><path d="M237.5 265.1a3.9 4.4 0 0 1 6.3 -3.3" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.52"><ellipse cx="272.8" cy="490.2" rx="5.0" ry="4.1" fill="url(#crater-bowl)"/><path d="M267.8 490.2a5.0 4.1 0 0 1 8.1 -3.1" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.48"><ellipse cx="405.4" cy="465.6" rx="4.8" ry="4.3" fill="url(#crater-bowl)"/><path d="M400.6 465.6a4.8 4.3 0 0 1 7.8 -3.2" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.56"><ellipse cx="88.2" cy="269.2" rx="1.2" ry="1.2" fill="url(#crater-bowl)"/><path d="M87.0 269.2a1.2 1.2 0 0 1 1.9 -0.9" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.48"><ellipse cx="128.6" cy="382.2" rx="3.8" ry="4.8" fill="url(#crater-bowl)"/><path d="M124.8 382.2a3.8 4.8 0 0 1 6.1 -3.6" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.64"><ellipse cx="485.6" cy="405.2" rx="1.0" ry="1.2" fill="url(#crater-bowl)"/><path d="M484.6 405.2a1.0 1.2 0 0 1 1.6 -0.9" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.50"><ellipse cx="198.4" cy="126.9" rx="2.7" ry="2.9" fill="url(#crater-bowl)"/><path d="M195.7 126.9a2.7 2.9 0 0 1 4.4 -2.2" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.54"><ellipse cx="308.9" cy="319.8" rx="3.0" ry="2.8" fill="url(#crater-bowl)"/><path d="M305.9 319.8a3.0 2.8 0 0 1 4.8 -2.1" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.52"><ellipse cx="227.3" cy="486.1" rx="1.0" ry="0.9" fill="url(#crater-bowl)"/><path d="M226.3 486.1a1.0 0.9 0 0 1 1.6 -0.7" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.31"><ellipse cx="456.0" cy="184.8" rx="1.7" ry="2.0" fill="url(#crater-bowl)"/><path d="M454.3 184.8a1.7 2.0 0 0 1 2.8 -1.5" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.52"><ellipse cx="236.9" cy="364.4" rx="3.0" ry="2.7" fill="url(#crater-bowl)"/><path d="M233.9 364.4a3.0 2.7 0 0 1 4.9 -2.0" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.44"><ellipse cx="478.7" cy="306.3" rx="2.1" ry="1.7" fill="url(#crater-bowl)"/><path d="M476.5 306.3a2.1 1.7 0 0 1 3.5 -1.3" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.52"><ellipse cx="422.0" cy="299.0" rx="1.7" ry="1.3" fill="url(#crater-bowl)"/><path d="M420.3 299.0a1.7 1.3 0 0 1 2.7 -1.0" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.51"><ellipse cx="414.4" cy="267.4" rx="4.7" ry="3.9" fill="url(#crater-bowl)"/><path d="M409.7 267.4a4.7 3.9 0 0 1 7.6 -3.0" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.35"><ellipse cx="122.9" cy="333.8" rx="3.9" ry="4.5" fill="url(#crater-bowl)"/><path d="M119.0 333.8a3.9 4.5 0 0 1 6.3 -3.4" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.66"><ellipse cx="137.7" cy="187.6" rx="1.3" ry="1.3" fill="url(#crater-bowl)"/><path d="M136.4 187.6a1.3 1.3 0 0 1 2.1 -1.0" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.30"><ellipse cx="105.0" cy="309.1" rx="2.8" ry="3.1" fill="url(#crater-bowl)"/><path d="M102.2 309.1a2.8 3.1 0 0 1 4.6 -2.3" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.45"><ellipse cx="319.8" cy="455.9" rx="3.8" ry="3.9" fill="url(#crater-bowl)"/><path d="M316.0 455.9a3.8 3.9 0 0 1 6.1 -2.9" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.56"><ellipse cx="261.8" cy="134.2" rx="1.9" ry="2.0" fill="url(#crater-bowl)"/><path d="M259.9 134.2a1.9 2.0 0 0 1 3.1 -1.5" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.42"><ellipse cx="243.6" cy="260.8" rx="2.7" ry="3.0" fill="url(#crater-bowl)"/><path d="M241.0 260.8a2.7 3.0 0 0 1 4.3 -2.3" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.57"><ellipse cx="341.4" cy="392.7" rx="1.6" ry="1.5" fill="url(#crater-bowl)"/><path d="M339.9 392.7a1.6 1.5 0 0 1 2.5 -1.1" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.59"><ellipse cx="481.9" cy="229.3" rx="4.8" ry="4.7" fill="url(#crater-bowl)"/><path d="M477.1 229.3a4.8 4.7 0 0 1 7.7 -3.5" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.57"><ellipse cx="217.0" cy="485.2" rx="3.7" ry="4.0" fill="url(#crater-bowl)"/><path d="M213.3 485.2a3.7 4.0 0 0 1 5.9 -3.0" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.51"><ellipse cx="110.7" cy="281.8" rx="3.9" ry="4.1" fill="url(#crater-bowl)"/><path d="M106.8 281.8a3.9 4.1 0 0 1 6.3 -3.1" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.42"><ellipse cx="327.5" cy="336.2" rx="4.8" ry="4.5" fill="url(#crater-bowl)"/><path d="M322.7 336.2a4.8 4.5 0 0 1 7.7 -3.4" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.51"><ellipse cx="189.6" cy="127.6" rx="4.5" ry="4.2" fill="url(#crater-bowl)"/><path d="M185.0 127.6a4.5 4.2 0 0 1 7.4 -3.1" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.67"><ellipse cx="458.3" cy="138.1" rx="2.7" ry="2.2" fill="url(#crater-bowl)"/><path d="M455.6 138.1a2.7 2.2 0 0 1 4.3 -1.6" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.52"><ellipse cx="296.7" cy="76.5" rx="3.2" ry="3.1" fill="url(#crater-bowl)"/><path d="M293.5 76.5a3.2 3.1 0 0 1 5.2 -2.4" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.32"><ellipse cx="330.8" cy="442.5" rx="3.6" ry="3.3" fill="url(#crater-bowl)"/><path d="M327.2 442.5a3.6 3.3 0 0 1 5.8 -2.5" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.55"><ellipse cx="403.5" cy="196.2" rx="2.3" ry="2.9" fill="url(#crater-bowl)"/><path d="M401.3 196.2a2.3 2.9 0 0 1 3.7 -2.2" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.36"><ellipse cx="72.5" cy="298.9" rx="1.9" ry="1.9" fill="url(#crater-bowl)"/><path d="M70.6 298.9a1.9 1.9 0 0 1 3.0 -1.4" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.64"><ellipse cx="164.0" cy="112.7" rx="2.4" ry="2.6" fill="url(#crater-bowl)"/><path d="M161.6 112.7a2.4 2.6 0 0 1 3.9 -2.0" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.59"><ellipse cx="134.4" cy="445.4" rx="1.9" ry="1.8" fill="url(#crater-bowl)"/><path d="M132.5 445.4a1.9 1.8 0 0 1 3.1 -1.4" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+<g opacity="0.36"><ellipse cx="349.4" cy="338.0" rx="2.8" ry="2.4" fill="url(#crater-bowl)"/><path d="M346.6 338.0a2.8 2.4 0 0 1 4.5 -1.8" stroke="#e3e3e3" stroke-opacity=".36" stroke-width=".55"/></g>
+  <!-- Recognisable large impact bowls with an off-centre floor and a sunward rim. -->
+  <g fill="url(#crater-bowl)">
+    <circle cx="231" cy="304" r="14.5"/><circle cx="279" cy="432" r="10.8"/>
+    <ellipse cx="170" cy="344" rx="12.5" ry="14"/><ellipse cx="135" cy="379" rx="7" ry="10.5"/>
+    <circle cx="287" cy="267" r="9"/><circle cx="328" cy="351" r="11"/>
+    <ellipse cx="390" cy="391" rx="12" ry="15"/><circle cx="254" cy="394" r="7.5"/>
+    <ellipse cx="363" cy="132" rx="6" ry="8.5"/><ellipse cx="109" cy="283" rx="5.5" ry="8"/>
+    <circle cx="192" cy="263" r="7.5"/><circle cx="330" cy="413" r="6.5"/>
+    <ellipse cx="307" cy="489" rx="13" ry="7"/><ellipse cx="424" cy="284" rx="8" ry="13"/>
+  </g>
+  <g stroke="#e4e4e4" stroke-width="1.2" stroke-opacity=".51">
+    <path d="M217 304a14 14 0 0 1 24-10M268.5 432a10.5 10.5 0 0 1 18-7.4M158 344a12 13.5 0 0 1 20-10M128 379a7 10 0 0 1 11-8M318 351a10 10 0 0 1 17-7M379 391a11 14 0 0 1 18-10M279 267a8 8 0 0 1 13-6"/>
+  </g>
+  <g fill="#cccccc" opacity=".53"><path d="M227 305l4-4 4 4-3 2Z"/><path d="M277 433l3-3 2 3-3 1Z"/><path d="M167 345l3-3 3 3-3 2Z"/></g>
+  <circle cx="300" cy="300" r="244" fill="#adadad" filter="url(#dust)" opacity=".55"/>
+  <circle cx="300" cy="300" r="244" fill="url(#lunar-limb)"/>
+  <ellipse cx="375" cy="212" rx="319" ry="314" fill="url(#umbra)" filter="url(#shadow-soft)"/>
+  <circle cx="300" cy="300" r="244" fill="url(#lower-shade)"/>
+  <circle cx="300" cy="300" r="244" fill="#ababab" filter="url(#dust)" opacity=".18"/>
+</g>
+<circle cx="300" cy="300" r="243.5" stroke="#cfcfcf" stroke-opacity=".12" stroke-width=".7"/>
+<path d="M92 174a244 244 0 0 1 174-115" stroke="#cfcfcf" stroke-opacity=".22" stroke-width=".7"/>
+</g>
+</svg>

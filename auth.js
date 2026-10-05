@@ -1,14 +1,32 @@
 import {
+  confirmHistoryDeletion,
   disconnectAccountSettings,
+  getGuestAvatar,
   getUserProfiles,
+  normalizeAvatarDataURL,
+  openSettings,
+  personalRail,
   syncAccountSettings,
-} from "./settings.js";
+} from "./settings.js?v=20261005-eclipse";
 
 const LOCAL_HISTORY_PREFIX = "arcana_history_";
 
 let authUser = null;
 let onAuthChange = () => {};
-let cloudHistoryProfileId = null;
+
+function accountIcon(name, className = "personal-icon") {
+  const paths = {
+    back: '<path d="m14 6-6 6 6 6M8 12h12"/>',
+    profile: '<circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/>',
+    sigil: '<path d="m12 2 3 7 7 3-7 3-3 7-3-7-7-3 7-3z"/>',
+    history: '<circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/>',
+  };
+  return `<svg class="${className}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.profile}</svg>`;
+}
+
+function openPersonalCenter() {
+  document.dispatchEvent(new CustomEvent("arcana:open-personal-center"));
+}
 
 function escapeHTML(value) {
   return String(value).replace(/[&<>"']/g, (character) => ({
@@ -71,9 +89,11 @@ function closeOverlay() {
   document.querySelector("#account-overlay")?.remove();
   document.body.classList.remove("account-open");
   const shell = document.querySelector(".site-shell");
-  if (shell) shell.inert = Boolean(document.querySelector("#provider-settings"));
-  if (["#login", "#register", "#history"].includes(location.hash)) history.replaceState(null, "", location.pathname + location.search);
-  document.querySelector("#account-button")?.focus();
+  const personalCenter = document.querySelector("#provider-settings");
+  if (personalCenter) personalCenter.inert = false;
+  if (shell) shell.inert = Boolean(personalCenter);
+  if (["#login", "#register", "#history"].includes(location.hash)) history.replaceState(null, "", location.pathname + location.search + (personalCenter ? "#personal-center" : ""));
+  (personalCenter?.querySelector("#settings-back") || document.querySelector("#account-button"))?.focus();
 }
 
 function createOverlay(label) {
@@ -87,20 +107,21 @@ function createOverlay(label) {
   document.body.append(overlay);
   document.body.classList.add("account-open");
   document.querySelector(".site-shell").inert = true;
+  const personalCenter = document.querySelector("#provider-settings");
+  if (personalCenter) personalCenter.inert = true;
   return overlay;
 }
 
 function authPage(mode) {
   const register = mode === "register";
+  if (!document.querySelector("#provider-settings")) openPersonalCenter();
   const overlay = createOverlay(register ? "注册 Arcana" : "登录 Arcana");
   location.hash = register ? "register" : "login";
   overlay.innerHTML = `<main class="auth-page">
-    <button class="auth-close" type="button" aria-label="返回抽牌">← 返回</button>
+    <button class="auth-close" type="button">${accountIcon("back")}返回个人中心</button>
+    <div class="auth-frame">
+    <section class="auth-introduction"><div class="auth-eclipse" aria-hidden="true"></div><h1>${register ? "创建你的 Arcana 账号" : "欢迎回来"}</h1>${register ? `<p class="auth-intro">资料与牌阵随账号保存。</p>` : ""}</section>
     <section class="auth-card">
-      <span class="auth-sigil" aria-hidden="true">✦</span>
-      <p class="eyebrow">ARCANA ACCOUNT</p>
-      <h1>${register ? "创建你的 Arcana 账号" : "欢迎回来"}</h1>
-      ${register ? `<p class="auth-intro">登录后，牌阵记录会安全地保存在你的云端账号中。</p>` : ""}
       <form id="auth-form" novalidate>
         ${register ? `<label><span>昵称</span><input name="nickname" type="text" maxlength="80" autocomplete="nickname" placeholder="希望 Arcana 怎么称呼你" required></label>` : ""}
         <label><span>邮箱</span><input name="email" type="email" maxlength="254" autocomplete="email" placeholder="name@example.com" required></label>
@@ -111,6 +132,7 @@ function authPage(mode) {
       </form>
       <button class="auth-switch" type="button">${register ? "已经有账号？直接登录" : "还没有账号？创建一个"}</button>
     </section>
+    </div>
   </main>`;
   overlay.querySelector(".auth-close").addEventListener("click", closeOverlay);
   overlay.querySelector(".auth-switch").addEventListener("click", () => authPage(register ? "login" : "register"));
@@ -166,7 +188,7 @@ async function offerHistoryMigration() {
   if (!authUser || !records.length) return;
   const overlay = createOverlay("同步本地历史记录");
   overlay.innerHTML = `<section class="migration-dialog">
-    <span class="auth-sigil" aria-hidden="true">✦</span>
+    <span class="auth-sigil" aria-hidden="true">${accountIcon("sigil")}</span>
     <h2>检测到本地历史记录</h2>
     <p>发现 ${records.length} 条保存在这个浏览器里的牌阵。是否同步到云端账号？</p>
     <div><button class="migration-later" type="button">暂不同步</button><button class="migration-confirm" type="button">同步到云端</button></div>
@@ -208,19 +230,20 @@ function cloudCards(record) {
 }
 
 function historyContent(records) {
-  if (!records.length) return `<div class="history-empty"><span>◇</span><strong>还没有历史牌阵</strong><p>完成一次解读后，它会自动保存在这里。</p></div>`;
+  if (!records.length) return `<div class="history-empty">${accountIcon("history")}<strong>还没有历史牌阵</strong><p>完成一次解读后，它会自动保存在这里。</p></div>`;
   return `<section class="history-timeline" aria-label="历史牌阵列表">${records.map((record) => `<article class="history-entry cloud-history-entry" data-history-id="${record.id}">
     <span class="history-dot" aria-hidden="true"></span>
     <div class="history-swipe-shell">
-      <button class="history-delete-button" type="button" tabindex="-1" data-cloud-history-delete="${record.id}" aria-label="删除这条历史牌阵">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>
-        <span>删除</span>
-      </button>
       <div class="history-bubble">
         <header><time>${escapeHTML(formatCloudTime(record.created_at))}</time><span>${escapeHTML(record.spread_type)}</span></header>
-        <p class="history-question">Q // ${escapeHTML(record.question)}</p>
+        <p class="history-question">${escapeHTML(record.question)}</p>
         <blockquote>“${record.summary ? escapeHTML(record.summary) : "这条旧记录没有独立总结。"}”</blockquote>
-        ${cloudCards(record)}
+        <div class="history-card-row">
+          ${cloudCards(record)}
+          <button class="history-delete-button history-delete-corner" type="button" data-cloud-history-delete="${record.id}" aria-label="删除这条历史牌阵" title="删除记录">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>
+          </button>
+        </div>
         ${record.full_reading ? `<details class="cloud-reading-details"><summary>查看完整解读</summary><p>${escapeHTML(record.full_reading)}</p></details>` : ""}
       </div>
     </div>
@@ -228,51 +251,9 @@ function historyContent(records) {
 }
 
 function bindCloudHistory(overlay, onDeleted = () => {}) {
-  let openEntry = null;
-  const revealWidth = 86;
-  const setEntryOpen = (entry, shouldOpen) => {
-    entry.classList.toggle("is-open", shouldOpen);
-    const button = entry.querySelector(".history-delete-button");
-    if (button) button.tabIndex = shouldOpen ? 0 : -1;
-  };
-  overlay.querySelectorAll(".cloud-history-entry").forEach((entry) => {
-    const bubble = entry.querySelector(".history-bubble");
-    let startX = 0;
-    let startY = 0;
-    let offset = 0;
-    let dragging = false;
-    bubble.addEventListener("pointerdown", (event) => {
-      if (event.target.closest("details")) return;
-      if (openEntry && openEntry !== entry) setEntryOpen(openEntry, false);
-      startX = event.clientX;
-      startY = event.clientY;
-      offset = entry.classList.contains("is-open") ? -revealWidth : 0;
-      dragging = true;
-      bubble.setPointerCapture(event.pointerId);
-    });
-    bubble.addEventListener("pointermove", (event) => {
-      if (!dragging) return;
-      const dx = event.clientX - startX;
-      const dy = event.clientY - startY;
-      if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 8) {
-        dragging = false;
-        bubble.style.transform = "";
-        return;
-      }
-      bubble.style.transform = `translateX(${Math.max(-revealWidth, Math.min(0, offset + dx))}px)`;
-    });
-    const finish = (event) => {
-      if (!dragging) return;
-      dragging = false;
-      const shouldOpen = offset + event.clientX - startX < -34;
-      bubble.style.transform = "";
-      setEntryOpen(entry, shouldOpen);
-      openEntry = shouldOpen ? entry : null;
-    };
-    bubble.addEventListener("pointerup", finish);
-    bubble.addEventListener("pointercancel", () => { dragging = false; bubble.style.transform = ""; });
-  });
-  overlay.querySelectorAll("[data-cloud-history-delete]").forEach((button) => button.addEventListener("click", async () => {
+  overlay.querySelectorAll("[data-cloud-history-delete]").forEach((button) => button.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    if (!await confirmHistoryDeletion(button)) return;
     const entry = button.closest(".history-entry");
     button.disabled = true;
     try {
@@ -280,8 +261,10 @@ function bindCloudHistory(overlay, onDeleted = () => {}) {
       onDeleted(Number(button.dataset.cloudHistoryDelete));
       entry.remove();
       const remaining = overlay.querySelectorAll(".cloud-history-entry").length;
-      overlay.querySelector(".history-heading p").textContent = `${remaining} 条云端记录`;
-      if (!remaining) overlay.querySelector("#cloud-history-list").innerHTML = historyContent([]);
+      overlay.querySelector(".history-heading p").textContent = `${remaining} 条记录`;
+      if (!remaining) {
+        overlay.querySelector("#cloud-history-list").innerHTML = historyContent([]);
+      }
     } catch (error) {
       button.disabled = false;
       window.alert(error.message);
@@ -289,56 +272,45 @@ function bindCloudHistory(overlay, onDeleted = () => {}) {
   }));
 }
 
-function cloudHistoryProfiles(records) {
-  const choices = new Map(getUserProfiles().map((profile) => [profile.id, profile.nickname]));
-  records.forEach((record) => {
-    if (record.profile_id && !choices.has(record.profile_id)) {
-      choices.set(record.profile_id, record.profile_nickname || "未命名用户");
-    }
-  });
-  return [...choices].map(([id, nickname]) => ({ id, nickname }));
-}
-
 function renderCloudHistory(overlay, records) {
-  const choices = cloudHistoryProfiles(records);
-  const activeProfile = getUserProfiles().find((profile) => profile.isActive);
-  if (!choices.some((profile) => profile.id === cloudHistoryProfileId)) {
-    cloudHistoryProfileId = choices.some((profile) => profile.id === activeProfile?.id)
-      ? activeProfile.id
-      : choices[0]?.id || null;
-  }
-  const picker = overlay.querySelector("#cloud-history-picker");
-  picker.innerHTML = choices.length
-    ? `<label class="history-user-picker cloud-history-user-picker"><span>选择用户</span><select aria-label="选择要查看的用户">${choices.map((profile) => `<option value="${escapeHTML(profile.id)}" ${profile.id === cloudHistoryProfileId ? "selected" : ""}>${escapeHTML(profile.nickname)}</option>`).join("")}</select></label>`
-    : `<span>${escapeHTML(authUser?.nickname || "已登录")}</span>`;
-  const visible = records.filter((record) => record.profile_id && record.profile_id === cloudHistoryProfileId);
-  overlay.querySelector(".history-heading p").textContent = `${visible.length} 条云端记录`;
-  overlay.querySelector("#cloud-history-list").innerHTML = historyContent(visible);
+  // 账号下的旧档案与未标记档案的记录都保留在同一条时间轴中。
+  overlay.querySelector(".history-heading p").textContent = `${records.length} 条记录`;
+  overlay.querySelector("#cloud-history-list").innerHTML = historyContent(records);
   bindCloudHistory(overlay, (deletedId) => {
     const index = records.findIndex((record) => record.id === deletedId);
     if (index !== -1) records.splice(index, 1);
   });
-  picker.querySelector("select")?.addEventListener("change", (event) => {
-    cloudHistoryProfileId = event.currentTarget.value;
-    renderCloudHistory(overlay, records);
-  });
+}
+
+function bindAccountRail(overlay) {
+  overlay.querySelectorAll("[data-settings-section]").forEach((button) => button.addEventListener("click", () => {
+    const section = button.dataset.settingsSection;
+    closeOverlay();
+    openSettings(section);
+  }));
 }
 
 async function openHistory() {
+  if (!document.querySelector("#provider-settings")) openPersonalCenter();
   const overlay = createOverlay("历史牌阵");
   location.hash = "history";
-  overlay.innerHTML = `<main class="cloud-history-page"><header><button class="auth-close" type="button">← 返回设置</button><div id="cloud-history-picker"><span>${authUser ? escapeHTML(authUser.nickname) : "未登录"}</span></div></header><div class="history-heading"><span class="eyebrow">TAROT ARCHIVE</span><h1>历史牌阵</h1><p>${authUser ? "正在读取云端记录…" : "0 条云端记录"}</p></div><div id="cloud-history-list">${authUser ? "" : `<div class="history-empty"><span>◇</span><strong>还没有历史牌阵</strong><p>登录后，完成的解读会自动保存在这里。</p><button class="history-login-button" type="button">登录 Arcana</button></div>`}</div></main>`;
+  overlay.innerHTML = `<div class="settings-page cloud-history-shell"><header class="settings-header"><span class="settings-brand"><span aria-hidden="true"></span>ARCANA</span><button class="auth-close" type="button">${accountIcon("back")}返回个人中心</button></header><div class="personal-workspace">${personalRail("history")}<div class="personal-workspace-content"><main class="cloud-history-page"><div class="history-toolbar"><div class="history-heading"><h1>历史牌阵</h1><p>${authUser ? "正在读取记录…" : "0 条记录"}</p></div></div><div id="cloud-history-list">${authUser ? "" : `<div class="history-empty">${accountIcon("history")}<strong>还没有历史牌阵</strong><p>登录后，完成的解读会自动保存在这里。</p><button class="history-login-button" type="button">登录 Arcana</button></div>`}</div></main></div></div></div>`;
+  bindAccountRail(overlay);
   overlay.querySelector(".auth-close").addEventListener("click", closeOverlay);
   if (!authUser) {
     overlay.querySelector(".history-login-button").addEventListener("click", () => authPage("login"));
     return;
   }
+  const accountId = authUser.id;
   try {
     const payload = await requestJSON("/api/readings");
+    if (!overlay.isConnected || authUser?.id !== accountId) return;
     renderCloudHistory(overlay, payload.readings);
   } catch (error) {
+    if (!overlay.isConnected || authUser?.id !== accountId) return;
     if (error.status === 401) {
       authUser = null;
+      disconnectAccountSettings();
       updateAccountHeader();
       closeOverlay();
       authPage("login");
@@ -350,34 +322,56 @@ async function openHistory() {
 
 function updateAccountHeader() {
   const host = document.querySelector("#account-area");
-  if (!host) return;
-  host.innerHTML = authUser
-    ? `<button id="account-button" class="account-button is-logged-in" type="button" aria-haspopup="menu" aria-expanded="false"><strong>${escapeHTML(authUser.nickname)}</strong></button><div class="account-menu" id="account-menu" role="menu" hidden><button type="button" data-account-action="logout" role="menuitem">退出登录</button></div>`
-    : `<button id="account-button" class="account-button" type="button"><strong>未登录</strong></button>`;
-  const button = host.querySelector("#account-button");
-  if (!authUser) {
-    button.addEventListener("click", () => authPage("login"));
-    return;
+  const avatar = authUser ? normalizeAvatarDataURL(authUser.avatar || "") : getGuestAvatar();
+  if (host) {
+    host.innerHTML = `<button id="account-button" class="account-button${authUser ? " is-logged-in" : ""}${avatar ? " has-avatar" : ""}" type="button" aria-label="打开个人中心${authUser ? `，${escapeHTML(authUser.nickname)}` : ""}" aria-haspopup="dialog" title="个人中心">${avatar ? `<img class="account-avatar-image" src="${escapeHTML(avatar)}" alt="" width="40" height="40">` : accountIcon("profile", "account-avatar-icon")}</button>`;
+    host.querySelector("#account-button").addEventListener("click", openPersonalCenter);
   }
-  const menu = host.querySelector("#account-menu");
-  button.addEventListener("click", () => {
-    menu.hidden = !menu.hidden;
-    button.setAttribute("aria-expanded", String(!menu.hidden));
-  });
-  menu.querySelector('[data-account-action="logout"]').addEventListener("click", async (event) => {
-    const logoutButton = event.currentTarget;
-    logoutButton.disabled = true;
-    logoutButton.textContent = "正在退出…";
-    await requestJSON("/api/logout", { method: "POST" }).catch(() => {});
-    authUser = null;
-    disconnectAccountSettings();
+  document.dispatchEvent(new CustomEvent("arcana:account-change", { detail: { user: authUser ? { id: authUser.id, nickname: authUser.nickname, email: authUser.email || "", avatar } : null } }));
+}
+
+async function updateAccountAvatar(event) {
+  const detail = event.detail || {};
+  const complete = typeof detail.complete === "function" ? detail.complete : () => {};
+  const accountId = authUser?.id;
+  if (!accountId || accountId !== detail.userId) { complete(new Error("账号状态发生变化，请重新选择头像。")); return; }
+  const avatar = detail.avatar;
+  if (typeof avatar !== "string" || (avatar && !normalizeAvatarDataURL(avatar))) { complete(new Error("头像图片无法保存，请重新选择。")); return; }
+  try {
+    const payload = await requestJSON("/api/avatar", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ avatar, userId: accountId }),
+    });
+    if (authUser?.id !== accountId) { complete(new Error("账号状态发生变化，请重新选择头像。")); return; }
+    const savedAvatar = normalizeAvatarDataURL(payload.avatar);
+    if (avatar && !savedAvatar) throw new Error("头像暂时没有保存成功，请稍后重试。");
+    authUser = { ...authUser, avatar: savedAvatar };
     updateAccountHeader();
-    onAuthChange(null);
-  });
+    complete();
+  } catch (error) {
+    if (error.status === 401 && authUser?.id === accountId) {
+      authUser = null;
+      disconnectAccountSettings();
+      updateAccountHeader();
+      onAuthChange(null);
+    }
+    complete(error);
+  }
+}
+
+async function logoutAccount() {
+  await requestJSON("/api/logout", { method: "POST" }).catch(() => {});
+  authUser = null;
+  disconnectAccountSettings();
+  closeOverlay();
+  updateAccountHeader();
+  onAuthChange(null);
 }
 
 export async function saveCloudReading(record) {
   if (!authUser) return false;
+  const accountId = authUser.id;
   try {
     await requestJSON("/api/readings", {
       method: "POST",
@@ -386,8 +380,9 @@ export async function saveCloudReading(record) {
     });
     return true;
   } catch (error) {
-    if (error.status === 401) {
+    if (error.status === 401 && authUser?.id === accountId) {
       authUser = null;
+      disconnectAccountSettings();
       updateAccountHeader();
       onAuthChange(null);
     }
@@ -398,9 +393,38 @@ export async function saveCloudReading(record) {
 export function openLogin() { authPage("login"); }
 export function openCloudHistory() { return openHistory(); }
 
+function syncOverlayRoute() {
+  const hash = location.hash;
+  const overlay = document.querySelector("#account-overlay");
+  if (!hash) {
+    if (overlay) closeOverlay();
+    if (document.querySelector("#provider-settings")) document.dispatchEvent(new CustomEvent("arcana:close-personal-center"));
+    return;
+  }
+  if (["#personal-center", "#settings"].includes(hash)) {
+    if (overlay) closeOverlay();
+    if (!document.querySelector("#provider-settings")) openPersonalCenter();
+    return;
+  }
+  if (hash === "#login" || hash === "#register") {
+    const register = hash === "#register";
+    if (overlay?.getAttribute("aria-label") !== (register ? "注册 Arcana" : "登录 Arcana")) authPage(register ? "register" : "login");
+  }
+  if (hash === "#history" && overlay?.getAttribute("aria-label") !== "历史牌阵") openHistory();
+}
+
 export async function initializeAuth(callback = () => {}) {
   onAuthChange = callback;
   document.addEventListener("arcana:open-cloud-history", openHistory);
+  document.addEventListener("arcana:open-login", () => authPage("login"));
+  document.addEventListener("arcana:logout", logoutAccount);
+  document.addEventListener("arcana:update-account-avatar", updateAccountAvatar);
+  document.addEventListener("arcana:guest-avatar-change", () => { if (!authUser) updateAccountHeader(); });
+  window.addEventListener("hashchange", syncOverlayRoute);
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && document.querySelector("#account-overlay")) closeOverlay();
+  });
+  updateAccountHeader();
   try {
     authUser = (await requestJSON("/api/me")).user;
     try {

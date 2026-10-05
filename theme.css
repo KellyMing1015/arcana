@@ -1,0 +1,350 @@
+/* Night sky visual system. Card selection and spread geometry remain in styles.css. */
+:root {
+  color-scheme: dark;
+  --paper: #0b1022;
+  --paper-deep: #090e1d;
+  --surface: #12192c;
+  --surface-soft: #161e33;
+  --ink: #ece6db;
+  --muted: #a3a3b6;
+  --line: rgba(173, 171, 198, .2);
+  --gold: #c5aa79;
+  --violet: #c5aa79;
+  --violet-deep: #d2bc96;
+  --pink: #c5aa79;
+  --blush: #1c243b;
+  --shadow: rgba(0, 0, 0, .26);
+  --serif: "Iowan Old Style", "Songti SC", "Noto Serif CJK SC", "Source Han Serif SC", "STSong", Baskerville, serif;
+  --sans: var(--serif);
+}
+[hidden] { display: none !important; }
+html { background: var(--paper); }
+body {
+  background: radial-gradient(ellipse at 70% 20%, #25213d66, transparent 55%), linear-gradient(150deg, #10162a, var(--paper) 65%);
+  color: var(--ink);
+}
+body::before {
+  z-index: 0;
+  background-image: radial-gradient(circle at 25px 35px, #e7ddc6 0 .85px, transparent 1.35px), radial-gradient(circle at 120px 180px, #c7cdea 0 1px, transparent 1.65px), radial-gradient(circle at 55px 250px, #ede3cd 0 .7px, transparent 1.2px), radial-gradient(circle at 190px 85px, #bfc6eb 0 .65px, transparent 1.25px), radial-gradient(circle at 80px 130px, #ebd9af 0 1.1px, #ebd9af20 1.5px, transparent 3px), radial-gradient(circle at 240px 310px, #a5b4da 0 .6px, transparent 1.2px);
+  background-size: 263px 277px, 347px 389px, 419px 373px, 293px 337px, 503px 457px, 377px 419px;
+  background-position: 0 0, 13px 20px, 40px 0, 19px 71px, 73px 0, 11px 43px;
+  mask-image: linear-gradient(to bottom, #000, #000b);
+  opacity: .67;
+}
+body.conversation-open::before { opacity: .06; }
+::selection { background: #c5aa7940; color: #fff5e1; }
+button, input, select, textarea, code { font-family: var(--serif); }
+button, a, summary, label:has(input[type="file"]) { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible, summary:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--gold); outline-offset: 4px; }
+.ui-icon { width: 20px; height: 20px; flex: none; vertical-align: middle; }
+.site-shell { isolation: isolate; }
+.site-header {
+  width: min(calc(100% - 64px), 1280px);
+  height: 78px;
+  margin: 0 auto;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+.wordmark { color: #e8dcc7; font-size: 21px; font-weight: 400; letter-spacing: .25em; }
+.brand-symbol { width: 12px; height: 12px; background: none; border: 1px solid var(--gold); clip-path: none; transform: rotate(45deg); }
+.wordmark-settings, .header-constellation, .ambient-figures { display: none; }
+.site-footer { min-height: 48px; color: #9997aa; font-size: 9px; letter-spacing: .18em; }
+.ritual-screen { width: min(100%, 1440px); min-height: calc(100dvh - 126px); }
+.eyebrow { color: var(--gold); font-weight: 400; font-size: 10px; letter-spacing: .23em; }
+
+/* Home: three choice boxes, a quiet sky and a single symmetrical card. */
+.question-screen { padding: clamp(36px, 7vh, 86px) 36px 48px; }
+.question-layout { width: min(100%, 1040px); grid-template-columns: minmax(0, 530px) minmax(260px, 360px); gap: clamp(56px, 8vw, 110px); }
+.question-inner { text-align: left; }
+.question-inner .home-eyebrow { display: inline-flex; align-items: center; gap: 12px; }
+.home-eyebrow::before { content: ""; width: 26px; height: 1px; background: var(--gold); opacity: .6; }
+.question-inner h1 { margin: 24px 0 18px; color: var(--ink); font-size: clamp(40px, 4.8vw, 61px); letter-spacing: .025em; line-height: 1.35; font-weight: 400; }
+.question-inner h1 em { color: #e8dcc7; font-style: normal; font-weight: 400; }
+.question-lead { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.8; }
+.ritual-question-form { margin-top: 30px; }
+.ritual-question-form textarea, .ritual-question-form .question-center-input {
+  height: 116px; min-height: 116px; max-height: 220px; padding: 20px;
+  border: 1px solid #8888a044; border-radius: 8px; background: #131a2cc9;
+  box-shadow: none; color: var(--ink); font-size: 16px; line-height: 1.8; resize: vertical;
+}
+.ritual-question-form textarea::placeholder { color: #85879d; }
+.ritual-question-form textarea:focus { border-color: #c5aa7999; background: #151c30; box-shadow: 0 0 0 3px #c5aa790b; }
+.ritual-spreads { margin: 24px 0 22px; gap: 10px; }
+.ritual-spreads legend { margin-bottom: 12px; color: var(--muted); font-size: 11px; font-weight: 400; letter-spacing: .08em; }
+.ritual-spread { min-height: 64px; padding: 14px 8px; border: 1px solid var(--line); border-radius: 6px; background: #11182aa6; box-shadow: none; }
+.ritual-spread strong { color: #b9b8c8; font-size: 13px; font-weight: 400; }
+.ritual-spread::before { display: none; content: "" !important; }
+.ritual-spread .ui-icon { width: 19px; height: 19px; color: var(--muted); }
+.ritual-spread.active .ui-icon { color: var(--gold); }
+.spread-symbol { width: 38px; height: 38px; color: #afa49a; flex: none; }
+.ritual-spread.active .spread-symbol { color: #d0b37a; filter: drop-shadow(0 0 6px #c5aa791a); }
+.ritual-spread:hover { border-color: #c5aa7977; background: #c5aa7909; transform: none; }
+.ritual-spread.active { border-color: #c5aa7999; background: #c5aa790f; box-shadow: inset 0 0 0 1px #c5aa7909; }
+.ritual-spread.active strong { color: #e4d0a9; }
+.ritual-primary, .result-actions button, .send-follow-up {
+  min-height: 50px; border: 1px solid #c5aa7988; border-radius: 6px;
+  background: #c5aa7915; color: #e7d5b3; box-shadow: none;
+  font-size: 14px; font-weight: 400; letter-spacing: .06em;
+}
+.ritual-primary:hover:not(:disabled), .result-actions button:hover:not(:disabled), .send-follow-up:hover:not(:disabled) { background: #c5aa7929; border-color: var(--gold); transform: translateY(-1px); }
+.ritual-primary .ui-icon { color: var(--gold); }
+.question-card-stage { min-height: 500px; position: relative; }
+.question-card-stage::before { width: 390px; height: 390px; background: radial-gradient(circle, #65618a17, transparent 68%); filter: none; }
+.question-card-preview { width: 236px; border: 0; border-radius: 7px; background: #121a31; transform: rotate(7deg); box-shadow: 0 28px 60px #0006, 0 0 40px #7a6e9820; }
+.question-orbit { border-color: #b0a4842b; box-shadow: none; }
+.orbit-one { width: 332px; height: 332px; }
+.orbit-two { width: 414px; height: 414px; border-style: solid; opacity: .5; transform: rotate(-20deg) scaleX(.8); }
+.home-constellation { position: absolute; inset: 0; width: 100%; height: 100%; color: #b9a777; opacity: .4; pointer-events: none; }
+.oracle-home.question-screen { min-height: calc(100dvh - 126px); padding: clamp(38px, 6vh, 70px) 24px 38px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.oracle-home-inner { position: relative; z-index: 2; width: min(100%, 680px); text-align: center; }
+.oracle-sky { position: absolute; left: 50%; top: 48%; width: min(940px, 112vw); aspect-ratio: 1; transform: translate(-50%, -50%); pointer-events: none; opacity: .46; mask-image: radial-gradient(circle, transparent 0 31%, #0007 47%, #000 65%, transparent 75%); }
+.oracle-sky svg { width: 100%; height: 100%; stroke: #a99a7640; stroke-width: .7; }
+.oracle-sky .oracle-inner-orbit { stroke: #b2a3c030; stroke-dasharray: 2 10; }
+.oracle-sky .oracle-dial-marks { stroke: #c5aa7970; }
+.oracle-sky .oracle-constellation-lines { stroke: #aea0c130; }
+.oracle-sky .oracle-dial-stars { fill: #e0cf9c; stroke: none; }
+.oracle-heading { position: relative; display: grid; justify-items: center; gap: 24px; }
+.oracle-moon { width: 27px; height: 27px; border-radius: 50%; border: 1px solid #d2bc9680; box-shadow: inset 8px 0 0 -1px #c5aa7970; transform: rotate(-25deg); }
+.oracle-heading h1 { margin: 0; font: 400 clamp(32px, 4vw, 48px)/1.4 var(--serif); color: #e9e0d1; letter-spacing: .12em; }
+.oracle-form { margin: 36px auto 0; width: min(100%, 600px); }
+.oracle-home .oracle-form textarea, .oracle-home .oracle-form .question-center-input { height: 115px; min-height: 115px; max-height: 115px; padding: 20px 24px; border: 0; border-bottom: 1px solid #b2a28555; border-radius: 0; background: none; box-shadow: none; resize: none; color: #ece6db; font: 21px/1.85 var(--serif); text-align: center; align-content: center; }
+.oracle-form textarea::placeholder { color: #a5a1b0; }
+.oracle-form textarea:focus { border-color: #d2bc96; background: none; box-shadow: 0 8px 15px -15px #c5aa7999; }
+.oracle-form .ritual-spreads { margin: 34px 0 32px; gap: 18px; }
+.oracle-form .ritual-spreads legend { text-align: center; margin-bottom: 19px; font-size: 12px; letter-spacing: .15em; color: #aca4b5; }
+.oracle-form .ritual-spread { min-height: 112px; padding: 22px 12px; gap: 15px; border-radius: 3px; background: #0e1523a3; }
+.oracle-form .ritual-spread strong { font-size: 16px; letter-spacing: .08em; }
+.oracle-form .ritual-spread .ui-icon { width: 25px; height: 25px; color: #a7a1ae; stroke-width: 1; }
+.oracle-form .ritual-spread.active { border-color: #c5aa79b3; background: linear-gradient(160deg, #c5aa7914, #c5aa7905); }
+.oracle-form .ritual-spread.active .ui-icon { color: #d2bc96; }
+.oracle-form .home-submit { display: inline-flex; width: auto; flex-direction: column; gap: 15px; padding: 0 20px; min-height: 0; border: 0; border-radius: 0; color: #dbc59d; background: none; box-shadow: none; font-weight: 400; }
+.home-submit-orb { width: 58px; height: 58px; border-radius: 50%; display: grid; place-items: center; border: 1px solid #c5aa7999; background: #c5aa7908; transition: background .2s, border-color .2s, box-shadow .2s; }
+.home-submit-orb .ui-icon { width: 24px; height: 24px; }
+.home-submit-label { font-size: 14px !important; letter-spacing: .16em; }
+.oracle-form .home-submit:hover:not(:disabled) { transform: none; border: 0; background: none; }
+.home-submit:hover .home-submit-orb { border-color: #e1ca99; background: #c5aa7917; box-shadow: 0 0 26px #c5aa7914; }
+.oracle-form .home-submit:focus-visible { outline-offset: 10px; border-radius: 4px; }
+.oracle-home .oracle-heading, .oracle-home .oracle-form { animation: none; }
+.celestial-home.oracle-home.question-screen { padding: 24px 24px 38px; min-height: calc(100dvh - 126px); align-items: flex-start; }
+.celestial-home .oracle-home-inner { width: min(100%, 760px); }
+.celestial-hero { display: grid; justify-items: center; position: relative; }
+.celestial-ornament { width: min(250px, 72%); height: 42px; opacity: .85; }
+.celestial-hero h1 { margin: 5px 0 4px; transform: translateY(-8px); color: #f0e8d9; font: 400 clamp(50px, 5vw, 64px)/1.15 var(--serif); letter-spacing: .025em; }
+.celestial-deck { width: min(100%, 360px); height: 236px; position: relative; display: grid; place-items: center; margin: 0 auto 4px; }
+.celestial-card { position: absolute; width: 120px; aspect-ratio: 2/3; border-radius: 7px; background: #11182c; box-shadow: 0 15px 30px #0004; border: 1px solid #b1a68055; transform-origin: 50% 92%; overflow: hidden; }
+.celestial-card .back-ornament { width: 100%; height: 100%; }
+.celestial-card-left { transform: rotate(-23deg) translate(-30px, 11px); }
+.celestial-card-right { transform: rotate(23deg) translate(30px, 11px); }
+.celestial-card-center { transform: translateY(-10px); box-shadow: 0 12px 36px #0006; }
+.celestial-orbit { position: absolute; width: 222px; height: 222px; border: 1px solid #a5a0be30; border-radius: 50%; }
+.celestial-orbit-inner { width: 194px; height: 194px; border-color: #c5aa7924; transform: rotate(-18deg) scaleX(1.15); }
+.celestial-deck-star { position: absolute; width: 19px; height: 19px; bottom: 4px; color: #c5aa79; }
+.celestial-home .oracle-sky { top: 340px; width: 910px; opacity: .2; mask-image: radial-gradient(circle, transparent 0 30%, #0008 48%, #000 66%, transparent 75%); }
+.celestial-home .celestial-form { width: min(100%, 600px); margin: 8px auto 0; padding: 14px 0; border: 0; border-radius: 0; background: none; text-align: left; box-shadow: none; }
+.celestial-home .celestial-form h2 { margin: 0 0 28px; font: 400 25px/1.5 var(--serif); letter-spacing: .04em; color: #e9e0d1; text-align: center; }
+.celestial-home .celestial-form .question-center-input { min-height: 44px; height: 44px; max-height: 140px; padding: 6px 8px 8px; text-align: left; font-size: 18px; line-height: 1.6; color: #d0cbdc; align-content: start; border: 0; border-bottom: 1px solid #aa9eaf77; border-radius: 0; background: none; box-shadow: none; resize: none; overflow-y: auto; }
+.celestial-home .celestial-form .question-center-input:focus { border-bottom-color: #c5aa79; box-shadow: none; background: none; }
+.celestial-home .celestial-form .ritual-spreads { margin: 22px 0 24px; gap: 14px; }
+.celestial-home .celestial-form .ritual-spreads legend { text-align: left; margin-bottom: 12px; color: #aba5b9; font-size: 11px; letter-spacing: .07em; }
+.celestial-home .celestial-form .ritual-spread { min-height: 82px; border-radius: 6px; gap: 7px; padding: 10px 6px; background: #10172b70; }
+.celestial-home .celestial-form .ritual-spread strong { font-size: 14px; }
+.celestial-home .celestial-form .ritual-spread .ui-icon { width: 22px; height: 22px; }
+.celestial-home .celestial-form .home-submit { flex-direction: row; gap: 14px; padding: 0; margin-left: auto; display: flex; width: fit-content; min-height: 44px; border: 0; border-radius: 0; color: #dbc59d; background: none; box-shadow: none; font-weight: 400; }
+.celestial-home .celestial-form .home-submit:hover:not(:disabled) { transform: none; background: none; border: 0; }
+.celestial-home .home-submit > .home-submit-orb { display: grid; width: 36px; height: 36px; border-color: #c5aa7966; }
+.celestial-home .home-submit-orb .ui-icon { width: 19px; height: 19px; }
+.celestial-home .home-submit-label { font-size: 14px !important; letter-spacing: .08em; }
+.back-ornament { background: #11182c url("/assets/ui/card-back-night.svg?v=1") center / cover no-repeat; }
+.shuffle-card, .cut-half, .fan-card, .flight-back { background: #11182c; border: 1px solid #b6a17633; box-shadow: 0 12px 28px #0005; }
+.shuffle-card, .cut-half { border-radius: 7px; }
+.card-art-retrying, .card-art-load-error { background: linear-gradient(145deg, #182038, #252942); }
+
+/* Compact, accessible question disclosure. Its text never sizes the page. */
+.ritual-top {
+  width: min(calc(100% - 64px), 1080px); margin-top: 18px; padding: 10px 0;
+  border: 0; border-radius: 0; background: none; box-shadow: none; backdrop-filter: none;
+  color: var(--muted); font-weight: 400; font-size: 10px;
+}
+.ritual-back, .conversation-back { display: inline-flex; align-items: center; gap: 7px; min-height: 40px; color: var(--muted); font-size: 12px; }
+.ritual-back:hover, .conversation-back:hover { color: var(--gold); }
+.result-top { grid-template-columns: 1fr auto 1fr; }
+.question-disclosure { position: relative; z-index: 30; flex: none; justify-self: end; color: var(--muted); }
+.question-disclosure summary { list-style: none; min-height: 40px; padding: 5px 10px; border: 1px solid transparent; border-radius: 5px; display: flex; gap: 6px; align-items: center; cursor: pointer; color: var(--muted); font-size: 11px; font-weight: 400; letter-spacing: .02em; }
+.question-disclosure summary::-webkit-details-marker { display: none; }
+.question-disclosure summary .ui-icon { width: 17px; height: 17px; }
+.question-disclosure summary:hover, .question-disclosure[open] summary { color: var(--gold); border-color: var(--line); background: #c5aa7908; }
+.question-popover { position: absolute; right: 0; top: calc(100% + 6px); width: min(340px, calc(100vw - 40px)); max-height: 38dvh; overflow-y: auto; padding: 20px 22px; border: 1px solid #a29cb544; border-radius: 8px; background: #171f33; box-shadow: 0 15px 50px #0008; text-align: left; letter-spacing: 0; }
+.question-popover small { color: var(--gold); font-size: 10px; }
+.question-popover p { margin: 10px 0 0; color: var(--ink); font: 15px/1.85 var(--sans); white-space: pre-wrap; overflow-wrap: anywhere; }
+.ritual-heading h1, .fan-heading h1 { color: var(--ink); font-size: clamp(32px, 4vw, 46px); font-weight: 400; letter-spacing: .03em; }
+.ritual-heading p, .fan-heading p { color: var(--muted); }
+.shuffle-glow, .cut-halo { border-color: #b8a47b22; }
+.shuffle-glow::after, .cut-halo::after { border-color: #b8a47b1a; }
+.ritual-instruction { color: var(--ink); }
+.ritual-instruction small, .cut-count { color: var(--muted); }
+.instruction-mark { border-color: #c5aa7944; background: transparent; box-shadow: none; }
+.instruction-mark::after { border-color: var(--gold); }
+.cut-actions .ritual-secondary { border-color: var(--line); background: transparent; color: var(--muted); border-radius: 6px; box-shadow: none; }
+.cut-actions .ritual-secondary:hover { border-color: var(--gold); color: var(--gold); }
+
+/* Protected selection geometry: change only the material, typography and colors. */
+.tray-slot { border-color: #c5aa793b; border-radius: 7px; background: #151c304d; color: #b0a993; box-shadow: none; }
+.tray-item small { color: var(--muted); }
+.fan-status { border-color: var(--line); background: #101729a8; color: var(--muted); box-shadow: none; }
+.fan-status strong { color: #d5c9b3; }
+.fan-arc-glow { background: radial-gradient(ellipse, #8b7bb417, transparent 65%); border-color: #bdad8633; }
+.fan-card::before { border-color: #d3bb88; box-shadow: 0 0 16px #c5aa7926; }
+.result-card-visual { filter: drop-shadow(0 12px 17px #0005); }
+.result-card-label strong { color: var(--ink); }
+.result-card-label span, .result-card-label small { color: #aaa5bb; }
+.result-heading { padding: 0; height: 0; }
+.result-screen .result-heading { flex: 0 0 0; }
+.result-screen { height: calc(100dvh - 78px); padding-bottom: 14px; }
+.result-screen .ritual-top { flex: 0 0 58px; margin-top: 0; }
+.result-screen .reading-output {
+  width: min(calc(100% - 64px), 820px); padding: 26px clamp(22px, 4vw, 44px);
+  border: 1px solid var(--line); border-radius: 8px; background: #11182be6;
+  box-shadow: none; color: #e3ded5; font-size: 18px; line-height: 1.95;
+  letter-spacing: .02em; overflow-wrap: anywhere;
+}
+.result-screen.has-reading .reading-output { margin: 12px auto 16px; }
+.result-screen .result-actions .ritual-primary { min-height: 46px; }
+.result-screen .result-actions p { color: var(--muted); font-size: 11px; line-height: 1.6; }
+.toast { border: 1px solid var(--line); border-radius: 7px; background: #202941; color: var(--ink); }
+
+/* Conversation: text, space and a single quiet composer. */
+.conversation-screen { width: min(100%, 940px); height: calc(100dvh - 78px); grid-template-rows: auto minmax(0, 1fr) auto; border: 0; border-radius: 0; background: #0b1022d9; box-shadow: none; }
+.conversation-toolbar { width: 100%; margin: 0; padding: 8px 30px; border: 0; border-bottom: 1px solid var(--line); background: none; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; }
+.conversation-label { color: #bcb4a7; font-size: 12px; letter-spacing: .08em; }
+.conversation-messages { padding: 26px 40px 32px; gap: 24px; background: none; scrollbar-gutter: stable; }
+.chat-message-body { max-width: 88%; gap: 7px; }
+.conversation-message small { color: #aaa4b6; font-size: 10px; }
+.chat-bubble { padding: 0; border-radius: 0; box-shadow: none; }
+.conversation-reader .chat-bubble { padding: 0; border: 0; border-radius: 0; background: none; }
+.conversation-user .chat-bubble { padding: 12px 18px; border: 1px solid #a09cbd22; border-radius: 8px; background: #20294190; color: var(--ink); }
+.conversation-message p, .conversation-reader p { color: #e5dfd6; font-size: 17px; line-height: 1.9; overflow-wrap: anywhere; }
+.conversation-message.is-error .chat-bubble { border: 1px solid #c9959440; background: #c9959409; border-radius: 6px; padding: 12px; }
+.conversation-message.is-stopped .chat-bubble-copy { color: #b8b5c4; }
+.conversation-compose { margin: 0 30px; padding: 14px 0 max(18px, env(safe-area-inset-bottom)); border: 0; border-top: 1px solid var(--line); background: var(--paper); box-shadow: none; }
+.conversation-compose textarea { min-height: 52px; max-height: 120px; padding: 14px 16px; border: 1px solid #a29cb533; border-radius: 7px; background: #141c2f; color: var(--ink); font-size: 16px; line-height: 1.6; }
+.conversation-compose textarea::placeholder { color: #9698ac; }
+.conversation-compose textarea:focus { border-color: #c5aa7977; box-shadow: none; }
+.image-upload-button { width: 46px; height: 52px; flex-basis: 46px; border: 0; border-radius: 6px; background: none; color: var(--muted); backdrop-filter: none; }
+.image-upload-button:hover { background: #c5aa790b; color: var(--gold); border: 0; }
+.image-upload-button .ui-icon { width: 22px; height: 22px; }
+.conversation-compose-actions { flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.conversation-compose-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; min-width: 72px; border-radius: 5px; font-size: 12px; font-weight: 400; }
+.conversation-compose-actions .end-conversation { border: 0; color: var(--muted); background: none; padding-inline: 8px; }
+.conversation-compose-actions .end-conversation:hover { color: var(--ink); background: #ffffff06; }
+.conversation-compose-actions .send-follow-up, .conversation-compose-actions .stop-follow-up { border: 1px solid #c5aa7977; background: #c5aa7914; color: #e6d3af; box-shadow: none; }
+.conversation-compose-actions .ui-icon { width: 17px; height: 17px; }
+.conversation-round-count { color: var(--muted); font-size: 10px; margin-right: auto; }
+.follow-up-status { color: #b5afc3; font-size: 11px; }
+.follow-up-status:empty { display: none; }
+.follow-up-image-preview { gap: 10px; }
+.follow-up-image-preview > span { background: #1a2237; border-color: var(--line); border-radius: 6px; }
+.follow-up-image-preview button { background: #1a2237; color: var(--ink); }
+.follow-up-image-preview button .ui-icon { width: 14px; height: 14px; }
+.chat-attachments img { border-color: var(--line); border-radius: 6px; }
+.typing-dots i { background: var(--gold); }
+
+@media (max-width: 850px) {
+  .question-layout { grid-template-columns: minmax(0, 1fr) 270px; gap: 45px; }
+  .question-card-preview { width: 196px; }
+  .question-card-stage { min-height: 410px; }
+  .orbit-one { width: 275px; height: 275px; }
+  .orbit-two { width: 335px; height: 335px; }
+}
+@media (max-width: 680px) {
+  .celestial-home.oracle-home.question-screen { padding: 18px 22px 30px; align-items: flex-start; }
+  .celestial-home .oracle-home-inner { width: min(100%, 510px); }
+  .celestial-ornament { width: 208px; height: 34px; }
+  .celestial-hero h1 { font-size: 46px; margin: 5px 0 0; }
+  .celestial-deck { height: clamp(172px, 24dvh, 202px); width: 290px; max-width: 100%; }
+  .celestial-card { width: 100px; }
+  .celestial-orbit { width: 188px; height: 188px; }
+  .celestial-orbit-inner { width: 164px; height: 164px; }
+  .celestial-deck-star { bottom: 3px; width: 15px; height: 15px; }
+  .celestial-home .celestial-form { padding: 12px 0; margin-top: 6px; border-radius: 0; }
+  .celestial-home .celestial-form h2 { font-size: 24px; margin-bottom: 26px; }
+  .celestial-home .celestial-form .question-center-input { font-size: 17px; padding: 6px 8px 8px; }
+  .celestial-home .celestial-form .ritual-spreads { gap: 9px; margin-top: 18px; margin-bottom: 20px; }
+  .celestial-home .celestial-form .ritual-spread { min-height: 80px; gap: 6px; }
+  .celestial-home .celestial-form .ritual-spread strong { font-size: 12px; letter-spacing: 0; }
+  .oracle-home.question-screen { min-height: calc(100dvh - 104px); padding: 36px 24px 34px; }
+  .oracle-home-inner { width: min(100%, 510px); }
+  .oracle-heading { gap: 24px; }
+  .oracle-heading h1 { font-size: 34px; }
+  .oracle-form { margin-top: 28px; }
+  .oracle-home .oracle-form textarea, .oracle-home .oracle-form .question-center-input { height: 116px; min-height: 116px; max-height: 116px; font-size: 20px; padding: 16px 8px; }
+  .oracle-form .ritual-spreads { margin-top: 31px; margin-bottom: 28px; gap: 12px; }
+  .oracle-form .ritual-spread { min-height: 104px; padding: 18px 6px; }
+  .oracle-form .ritual-spread strong { font-size: 14px; letter-spacing: .04em; }
+  .oracle-sky { width: 890px; opacity: .42; }
+  .site-header { width: calc(100% - 40px); height: 66px; margin: 0 auto; border-radius: 0; padding: 0; }
+  .wordmark { font-size: 18px; }
+  .site-footer { min-height: 38px; }
+  .ritual-screen { min-height: calc(100dvh - 104px); }
+  .question-screen { padding: 18px 24px 28px; }
+  .question-layout { grid-template-columns: 1fr; gap: 8px; }
+  .question-inner { max-width: 460px; text-align: center; }
+  .question-inner h1 { margin: 15px 0 10px; font-size: 33px; line-height: 1.3; }
+  .question-inner h1 br { display: none; }
+  .question-inner .home-eyebrow { font-size: 8px; gap: 9px; }
+  .home-eyebrow::before { width: 17px; }
+  .question-lead { font-size: 12px; }
+  .question-card-stage { order: -1; min-height: 160px; }
+  .question-card-stage::before { width: 200px; height: 200px; }
+  .question-card-preview { width: 92px; border: 0; border-radius: 5px; transform: rotate(5deg); }
+  .orbit-one { width: 170px; height: 170px; }
+  .orbit-two { width: 213px; height: 213px; }
+  .home-constellation { opacity: .24; }
+  .ritual-question-form { margin-top: 22px; }
+  .ritual-question-form textarea, .ritual-question-form .question-center-input { height: 110px; min-height: 110px; border-radius: 7px; padding: 16px; text-align: left; }
+  .ritual-spreads { margin-top: 18px; gap: 8px; text-align: left; }
+  .ritual-spread { min-height: 60px; border-radius: 5px; }
+  .ritual-spread strong { font-size: 12px; }
+  .ritual-primary { min-height: 48px; }
+  .ritual-top { width: calc(100% - 36px); padding: 6px 0; margin-top: 6px; border-radius: 0; gap: 8px; }
+  .ritual-top > span { font-size: 9px; letter-spacing: .02em; }
+  .ritual-back { font-size: 11px; gap: 3px; }
+  .ritual-back .ui-icon { width: 15px; height: 15px; }
+  .ritual-heading { padding-top: 18px; }
+  .ritual-heading h1 { font-size: 31px; }
+  .question-disclosure summary { padding-inline: 5px; }
+  .result-screen { height: calc(100dvh - 66px); padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+  .result-screen .result-top { width: calc(100% - 36px); grid-template-columns: 1fr auto 1fr; padding: 5px 0; flex-basis: 52px; }
+  .result-screen:not(.has-reading) .result-heading { padding: 0; height: 0; min-height: 0; }
+  .result-screen .reading-output { width: calc(100% - 36px); padding: 20px; font-size: 17px; line-height: 1.95; border-radius: 7px; }
+  .result-screen .result-actions { width: calc(100% - 36px); }
+  .result-screen .result-actions p { font-size: 10px; }
+  .result-layout-10 :is(.result-card-7, .result-card-8, .result-card-9, .result-card-10) .result-card-label { left: calc(100% + 4px); gap: 1px; line-height: 1.1; }
+  .conversation-screen { height: calc(100dvh - 66px); }
+  .conversation-toolbar { padding: 6px 18px; gap: 6px; }
+  .conversation-label { font-size: 11px; }
+  .conversation-back { font-size: 10px; gap: 4px; }
+  .conversation-back .ui-icon { width: 15px; height: 15px; }
+  .conversation-messages { padding: 24px 22px; gap: 23px; }
+  .chat-message-body { max-width: 93%; }
+  .conversation-message p { font-size: 16px; line-height: 1.85; }
+  .conversation-user .chat-bubble { padding: 10px 14px; }
+  .conversation-compose { margin-inline: 18px; }
+  .conversation-compose textarea { font-size: 16px; }
+  .conversation-empty { padding: 7dvh 0; }
+  .conversation-empty p { font-size: 24px; }
+  .conversation-compose-actions .follow-up-status:not(:empty) { order: 4; flex-basis: 100%; margin: 0; }
+}
+@media (max-height: 700px) and (min-width: 681px) {
+  .question-screen { padding-block: 30px; }
+  .question-card-stage { min-height: 420px; }
+  .question-inner h1 { font-size: 45px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}

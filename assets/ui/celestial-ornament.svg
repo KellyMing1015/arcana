@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="90" viewBox="0 0 400 90" fill="none">
+  <g stroke="#c5aa79" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 65C108 22 292 22 380 65" stroke-width=".8" opacity=".4"/>
+    <path d="M48 70C130 35 270 35 352 70" stroke-width=".8" opacity=".23"/>
+    <path d="M91 59C151 41 249 41 309 59" stroke-width=".8" opacity=".38"/>
+    <path d="M162 37C174 35 187 34 200 34C213 34 226 35 238 37" stroke-width="1" opacity=".7"/>
+
+    <path d="M200 23L202.6 32.4L212 35L202.6 37.6L200 47L197.4 37.6L188 35L197.4 32.4Z" stroke-width=".9" opacity=".9"/>
+    <path d="M200 14V19M200 51V56M178 35H183M217 35H222" stroke-width=".8" opacity=".45"/>
+    <circle cx="200" cy="35" r="2.1" stroke-width=".8" opacity=".7"/>
+    <path d="M200 65L202 68L200 71L198 68Z" stroke-width=".8" opacity=".55"/>
+
+    <path d="M59 16L61.8 25.2L71 28L61.8 30.8L59 40L56.2 30.8L47 28L56.2 25.2Z" stroke-width="1" opacity=".83"/>
+    <path d="M59 10V12M41 28H43M75 28H77M59 44V46" stroke-width=".8" opacity=".4"/>
+    <path d="M96 21L97.4 26.6L103 28L97.4 29.4L96 35L94.6 29.4L89 28L94.6 26.6Z" stroke-width=".8" opacity=".45"/>
+
+    <path d="M335.8 14.8C328.7 15.9 323.3 22 323.3 29.4C323.3 37.6 329.9 44.2 338.1 44.2C343.2 44.2 347.7 41.6 350.4 37.7C348.2 38.8 345.8 39.4 343.2 39.4C334.8 39.4 328 32.6 328 24.2C328 20.7 329.2 17.4 331.3 14.8C332.8 14.6 334.3 14.6 335.8 14.8Z" stroke-width="1.1" opacity=".83"/>
+    <path d="M362 15L363.4 20.6L369 22L363.4 23.4L362 29L360.6 23.4L355 22L360.6 20.6Z" stroke-width=".8" opacity=".48"/>
+    <path d="M302 54L303.2 58.8L308 60L303.2 61.2L302 66L300.8 61.2L296 60L300.8 58.8Z" stroke-width=".8" opacity=".55"/>
+
+    <path d="M16 65H25M375 65H384" stroke-width=".8" opacity=".36"/>
+    <path d="M132 49L134 52L132 55L130 52Z" stroke-width=".8" opacity=".5"/>
+    <circle cx="266" cy="51.5" r="2" stroke-width=".8" opacity=".5"/>
+  </g>
+  <g fill="#c5aa79">
+    <circle cx="35" cy="51" r="1.1" opacity=".64"/>
+    <circle cx="112" cy="16" r=".8" opacity=".46"/>
+    <circle cx="146" cy="31" r="1" opacity=".48"/>
+    <circle cx="245" cy="24" r=".8" opacity=".48"/>
+    <circle cx="283" cy="17" r="1" opacity=".63"/>
+    <circle cx="315" cy="11" r=".7" opacity=".4"/>
+    <circle cx="376" cy="45" r=".9" opacity=".6"/>
+    <circle cx="80" cy="74" r=".7" opacity=".35"/>
+    <circle cx="234" cy="73" r=".7" opacity=".4"/>
+  </g>
+</svg>

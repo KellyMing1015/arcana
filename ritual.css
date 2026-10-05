@@ -1,0 +1,259 @@
+/* Touch-led card rituals. Selection and spread geometry remain untouched. */
+.shuffle-screen,
+.cut-screen { --hold-glow: 0; --cut-progress: 0; }
+.shuffle-screen .ritual-heading,
+.cut-screen .ritual-heading { padding-top: 30px; }
+.shuffle-screen .ritual-heading h1,
+.cut-screen .ritual-heading h1 { margin: 12px 0 13px; letter-spacing: .07em; }
+.shuffle-screen .ritual-heading p,
+.cut-screen .ritual-heading p { color: var(--muted); font-size: 14px; }
+.shuffle-screen .shuffle-surface,
+.cut-screen .cut-stage { height: 365px; margin-top: 8px; }
+.shuffle-screen .shuffle-glow,
+.cut-screen .cut-halo {
+  width: 380px; height: 380px;
+  border: 1px solid color-mix(in srgb, var(--gold) 16%, transparent);
+  background: transparent;
+  box-shadow: none;
+  transition: border-color .4s ease, box-shadow .6s ease;
+}
+.shuffle-screen .shuffle-glow::after,
+.cut-screen .cut-halo::after {
+  inset: 35px;
+  border-color: color-mix(in srgb, var(--gold) 9%, transparent);
+}
+.ritual-orbit-light {
+  position: absolute; inset: -45px;
+  border-radius: 50%; pointer-events: none;
+  background: radial-gradient(circle, transparent 25%, color-mix(in srgb, var(--gold) 6%, transparent) 50%, transparent 70%);
+  opacity: .2;
+  transition: opacity .6s ease;
+}
+.ritual-orbit-dot {
+  position: absolute; inset: -1px;
+  border-radius: 50%; pointer-events: none;
+  transform: rotate(-35deg);
+  opacity: .3;
+  transition: opacity .4s ease;
+}
+.ritual-orbit-dot::before {
+  content: ""; position: absolute; top: -2px; left: calc(50% - 2px);
+  width: 4px; height: 4px; border-radius: 50%;
+  background: var(--gold); box-shadow: 0 0 13px color-mix(in srgb, var(--gold) 42%, transparent);
+}
+.ritual-is-pressing .shuffle-glow,
+.ritual-is-holding .shuffle-glow {
+  border-color: color-mix(in srgb, var(--gold) 35%, transparent);
+  box-shadow: 0 0 42px color-mix(in srgb, var(--gold) 5%, transparent), inset 0 0 30px color-mix(in srgb, var(--gold) 4%, transparent);
+}
+.ritual-is-pressing .ritual-orbit-light { opacity: .5; }
+.ritual-is-holding .ritual-orbit-light { opacity: calc(.4 + var(--hold-glow)); }
+.ritual-is-holding .ritual-orbit-dot { opacity: .75; animation: ritual-orbit 18s linear infinite; }
+.ritual-is-settling .shuffle-glow { border-color: color-mix(in srgb, var(--gold) 25%, transparent); }
+.shuffle-screen .shuffle-pile { width: 202px; height: 290px; --scatter-scale: 1; }
+.shuffle-screen .shuffle-card {
+  --scatter-position: translate(-50%,-50%) translate(calc(var(--rest-x,0px) * var(--scatter-scale)), calc(var(--rest-y,0px) * var(--scatter-scale)));
+  width: 164px; transform: var(--scatter-position) rotate(var(--rest-tilt,0deg));
+  transition: transform .6s cubic-bezier(.2,.7,.2,1);
+}
+.shuffle-screen .shuffle-card:nth-child(1) { --rest-x: -68px; --rest-y: -8px; --rest-tilt: -19deg; --mix-duration: 2.25s; --mix-delay: -.12s; --mix-depth: 1; }
+.shuffle-screen .shuffle-card:nth-child(2) { --rest-x: 64px; --rest-y: 4px; --rest-tilt: 17deg; --mix-duration: 2.63s; --mix-delay: -1.14s; --mix-depth: 2; }
+.shuffle-screen .shuffle-card:nth-child(3) { --rest-x: -49px; --rest-y: -34px; --rest-tilt: -11deg; --mix-duration: 2.42s; --mix-delay: -.76s; --mix-depth: 3; }
+.shuffle-screen .shuffle-card:nth-child(4) { --rest-x: 39px; --rest-y: 31px; --rest-tilt: 12deg; --mix-duration: 2.14s; --mix-delay: -1.61s; --mix-depth: 4; }
+.shuffle-screen .shuffle-card:nth-child(5) { --rest-x: -70px; --rest-y: 26px; --rest-tilt: -16deg; --mix-duration: 2.78s; --mix-delay: -1.86s; --mix-depth: 5; }
+.shuffle-screen .shuffle-card:nth-child(6) { --rest-x: 59px; --rest-y: -26px; --rest-tilt: 19deg; --mix-duration: 2.31s; --mix-delay: -.43s; --mix-depth: 6; }
+.shuffle-screen .shuffle-card:nth-child(7) { --rest-x: -23px; --rest-y: 36px; --rest-tilt: -9deg; --mix-duration: 2.57s; --mix-delay: -2.03s; --mix-depth: 7; }
+.shuffle-screen .shuffle-card:nth-child(8) { --rest-x: 30px; --rest-y: -35px; --rest-tilt: 10deg; --mix-duration: 2.2s; --mix-delay: -.95s; --mix-depth: 8; }
+.shuffle-screen .shuffle-card:nth-child(9) { --rest-x: -52px; --rest-y: 13px; --rest-tilt: -13deg; --mix-duration: 2.48s; --mix-delay: -.61s; --mix-depth: 9; }
+.shuffle-screen .shuffle-card:nth-child(10) { --rest-x: 47px; --rest-y: 16px; --rest-tilt: 14deg; --mix-duration: 2.72s; --mix-delay: -2.24s; --mix-depth: 10; }
+.shuffle-screen .shuffle-card:nth-child(11) { --rest-x: -19px; --rest-y: -16px; --rest-tilt: -7deg; --mix-duration: 2.18s; --mix-delay: -1.33s; --mix-depth: 11; }
+.shuffle-screen .shuffle-card:nth-child(12) { --rest-x: 24px; --rest-y: 14px; --rest-tilt: 8deg; --mix-duration: 2.54s; --mix-delay: -.28s; --mix-depth: 12; }
+.shuffle-screen .shuffle-card:nth-child(13) { --rest-x: -8px; --rest-y: 24px; --rest-tilt: -3deg; --mix-duration: 2.36s; --mix-delay: -1.72s; --mix-depth: 13; }
+.shuffle-screen .shuffle-card:nth-child(14) { --rest-x: 4px; --rest-y: -8px; --rest-tilt: 3deg; --mix-duration: 2.68s; --mix-delay: -.89s; z-index: 30; }
+.shuffle-screen .shuffle-pile.is-pressing .shuffle-card {
+  transform: var(--scatter-position) rotate(var(--rest-tilt)) scale(.985);
+}
+.shuffle-screen .shuffle-pile.is-shuffling .shuffle-card:nth-child(4n+1) {
+  animation: ritual-shuffle-cross-a var(--mix-duration) var(--mix-delay) infinite cubic-bezier(.45,0,.55,1), ritual-shuffle-depth var(--mix-duration) var(--mix-delay) infinite steps(1,end);
+}
+.shuffle-screen .shuffle-pile.is-shuffling .shuffle-card:nth-child(4n+2) {
+  animation: ritual-shuffle-cross-b var(--mix-duration) var(--mix-delay) infinite cubic-bezier(.45,0,.55,1), ritual-shuffle-depth var(--mix-duration) var(--mix-delay) infinite steps(1,end);
+}
+.shuffle-screen .shuffle-pile.is-shuffling .shuffle-card:nth-child(4n+3) {
+  animation: ritual-shuffle-cross-c var(--mix-duration) var(--mix-delay) infinite cubic-bezier(.45,0,.55,1), ritual-shuffle-depth var(--mix-duration) var(--mix-delay) infinite steps(1,end);
+}
+.shuffle-screen .shuffle-pile.is-shuffling .shuffle-card:nth-child(4n+4) {
+  animation: ritual-shuffle-cross-d var(--mix-duration) var(--mix-delay) infinite cubic-bezier(.45,0,.55,1), ritual-shuffle-depth var(--mix-duration) var(--mix-delay) infinite steps(1,end);
+}
+.shuffle-screen .shuffle-pile.is-shuffling .shuffle-card:nth-child(14) {
+  animation: ritual-shuffle-anchor var(--mix-duration) var(--mix-delay) infinite cubic-bezier(.45,0,.55,1);
+  z-index: 30;
+}
+.shuffle-screen .shuffle-pile.is-settling .shuffle-card { transform: translate(-50%,-50%) rotate(0deg); }
+.ritual-hold-feedback {
+  position: relative; z-index: 2; width: fit-content;
+  margin: 4px auto 36px; text-align: center;
+}
+.ritual-phase-marks { display: flex; justify-content: center; gap: 8px; margin-bottom: 16px; }
+.ritual-phase-marks i {
+  display: block; width: 4px; height: 4px; border-radius: 50%;
+  background: var(--line); transition: background .5s ease, box-shadow .5s ease;
+}
+.ritual-phase-marks i.is-active { background: var(--gold); box-shadow: 0 0 8px color-mix(in srgb, var(--gold) 25%, transparent); }
+.ritual-hold-feedback .ritual-instruction {
+  display: flex; min-width: 225px; margin: 0; padding: 0; gap: 8px;
+  border: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--ink);
+}
+.ritual-hold-feedback .ritual-instruction strong { color: var(--ink); font-size: 14px; font-weight: 400; letter-spacing: .05em; }
+.ritual-hold-feedback .ritual-instruction small { color: var(--muted); font-size: 12px; letter-spacing: .02em; font-variant-numeric: tabular-nums; }
+.ritual-key-hint { display: block; margin-top: 11px; color: var(--muted); opacity: .7; font-size: 11px; line-height: 1.6; }
+.cut-direction-cue {
+  position: absolute; top: 50%; display: flex; flex-direction: column;
+  align-items: center; gap: 7px; color: var(--muted); opacity: .45;
+  transform: translateY(-50%); transition: color .25s ease, opacity .25s ease, transform .25s ease;
+  pointer-events: none;
+}
+.cut-cue-left { right: calc(50% + 142px); }
+.cut-cue-right { left: calc(50% + 142px); }
+.cut-direction-cue .ui-icon { width: 24px; height: 24px; }
+.cut-direction-cue small { font-size: 10px; letter-spacing: .06em; }
+.cut-screen[data-cut-direction="left"] .cut-cue-left,
+.cut-screen[data-cut-direction="right"] .cut-cue-right { color: var(--gold); opacity: 1; }
+.cut-screen[data-cut-direction="left"] .cut-cue-left { transform: translate(-5px,-50%); }
+.cut-screen[data-cut-direction="right"] .cut-cue-right { transform: translate(5px,-50%); }
+.cut-ready .cut-halo,
+.ritual-is-cutting .cut-halo { border-color: color-mix(in srgb, var(--gold) 38%, transparent); }
+.cut-ready .ritual-orbit-light,
+.ritual-is-cutting .ritual-orbit-light { opacity: .8; }
+.cut-screen .cut-pile { width: 202px; height: 290px; }
+.cut-screen .cut-half {
+  width: 164px;
+  box-shadow: 0 2px 0 color-mix(in srgb, var(--gold) 18%, var(--surface)), 0 4px 0 var(--surface), 0 5px 0 color-mix(in srgb, var(--gold) 14%, var(--surface)), 0 20px 30px color-mix(in srgb, var(--surface) 65%, transparent);
+}
+.cut-screen .cut-top { transform: translate(calc(-50% + var(--drag-x,0px)),-54%) rotate(var(--drag-tilt,0deg)); }
+.cut-screen .cut-pile.is-cutting .cut-top { animation: ritual-cut-top .55s cubic-bezier(.25,.6,.2,1) both; }
+.cut-screen .cut-pile.is-cutting .cut-bottom { animation: ritual-cut-bottom .55s cubic-bezier(.25,.6,.2,1) both; }
+.cut-feedback { position: relative; z-index: 2; margin: 0 auto 20px; text-align: center; }
+.cut-feedback p { min-height: 22px; margin: 12px 20px 0; color: var(--muted); font-size: 12px; line-height: 1.8; }
+.cut-feedback .ritual-key-hint { margin-top: 5px; }
+.cut-gesture-meter {
+  position: relative; width: 72px; height: 1px; margin: 0 auto;
+  background: var(--line);
+}
+.cut-gesture-meter i {
+  display: block; width: 100%; height: 1px; background: var(--gold);
+  transform: scaleX(var(--cut-progress)); transform-origin: center;
+  transition: transform .1s linear;
+}
+.cut-gesture-meter span {
+  position: absolute; width: 3px; height: 3px; top: -1px; left: calc(50% - 1.5px);
+  border-radius: 50%; background: var(--gold); opacity: .5;
+}
+.cut-ready .cut-gesture-meter span { opacity: 1; box-shadow: 0 0 9px var(--gold); }
+.cut-screen .cut-actions { width: min(calc(100% - 44px), 188px); margin: 0 auto; }
+.cut-screen .cut-button { justify-content: center; gap: 15px; white-space: nowrap; }
+.cut-screen .ritual-secondary { min-width: 108px; color: var(--muted); border-color: var(--line); border-radius: 6px; background: transparent; }
+.cut-screen .ritual-secondary:hover { color: var(--ink); border-color: var(--gold); background: color-mix(in srgb, var(--gold) 6%, transparent); }
+.cut-screen .cut-count { margin: 17px 0 35px; color: var(--muted); opacity: .7; font-size: 11px; }
+@keyframes ritual-orbit { from { transform: rotate(-35deg); } to { transform: rotate(325deg); } }
+/* Separate trajectories and changing depth let cards cross over and under one another. */
+@keyframes ritual-shuffle-cross-a {
+  0%,100% { transform: var(--scatter-position) rotate(var(--rest-tilt)); }
+  20% { transform: translate(-50%,-50%) translate(calc(28px * var(--scatter-scale)),calc(-28px * var(--scatter-scale))) rotate(-14deg); }
+  44% { transform: translate(-50%,-50%) translate(calc(78px * var(--scatter-scale)),calc(22px * var(--scatter-scale))) rotate(15deg); }
+  68% { transform: translate(-50%,-50%) translate(calc(var(--rest-x) * var(--scatter-scale) * -1),calc(var(--rest-y) * var(--scatter-scale) * -.7)) rotate(calc(var(--rest-tilt) * -1)); }
+  84% { transform: translate(-50%,-50%) translate(calc(-26px * var(--scatter-scale)),calc(18px * var(--scatter-scale))) rotate(-10deg); }
+}
+@keyframes ritual-shuffle-cross-b {
+  0%,100% { transform: var(--scatter-position) rotate(var(--rest-tilt)); }
+  16% { transform: translate(-50%,-50%) translate(calc(-24px * var(--scatter-scale)),calc(24px * var(--scatter-scale))) rotate(16deg); }
+  40% { transform: translate(-50%,-50%) translate(calc(-76px * var(--scatter-scale)),calc(-20px * var(--scatter-scale))) rotate(-18deg); }
+  64% { transform: translate(-50%,-50%) translate(calc(var(--rest-x) * var(--scatter-scale) * -1),calc(var(--rest-y) * var(--scatter-scale) * -.7)) rotate(calc(var(--rest-tilt) * -1)); }
+  82% { transform: translate(-50%,-50%) translate(calc(30px * var(--scatter-scale)),calc(-26px * var(--scatter-scale))) rotate(13deg); }
+}
+@keyframes ritual-shuffle-cross-c {
+  0%,100% { transform: var(--scatter-position) rotate(var(--rest-tilt)); }
+  24% { transform: translate(-50%,-50%) translate(calc(8px * var(--scatter-scale)),calc(32px * var(--scatter-scale))) rotate(18deg); }
+  46% { transform: translate(-50%,-50%) translate(calc(-62px * var(--scatter-scale)),calc(16px * var(--scatter-scale))) rotate(-15deg); }
+  66% { transform: translate(-50%,-50%) translate(calc(68px * var(--scatter-scale)),calc(-20px * var(--scatter-scale))) rotate(-19deg); }
+  84% { transform: translate(-50%,-50%) translate(calc(var(--rest-x) * var(--scatter-scale) * -1),calc(var(--rest-y) * var(--scatter-scale) * -.7)) rotate(calc(var(--rest-tilt) * -1)); }
+}
+@keyframes ritual-shuffle-cross-d {
+  0%,100% { transform: var(--scatter-position) rotate(var(--rest-tilt)); }
+  18% { transform: translate(-50%,-50%) translate(0px,calc(-30px * var(--scatter-scale))) rotate(-17deg); }
+  42% { transform: translate(-50%,-50%) translate(calc(66px * var(--scatter-scale)),calc(26px * var(--scatter-scale))) rotate(20deg); }
+  62% { transform: translate(-50%,-50%) translate(calc(-72px * var(--scatter-scale)),calc(-12px * var(--scatter-scale))) rotate(-16deg); }
+  80% { transform: translate(-50%,-50%) translate(calc(var(--rest-x) * var(--scatter-scale) * -1),calc(var(--rest-y) * var(--scatter-scale) * -.7)) rotate(calc(var(--rest-tilt) * -1)); }
+}
+@keyframes ritual-shuffle-depth {
+  0%,48%,100% { z-index: var(--mix-depth); }
+  22%,74% { z-index: calc(15 - var(--mix-depth)); }
+}
+@keyframes ritual-shuffle-anchor {
+  0%,100% { transform: var(--scatter-position) rotate(var(--rest-tilt)); }
+  16% { transform: var(--scatter-position) translate(-7px,6px) rotate(16deg); }
+  40% { transform: var(--scatter-position) translate(8px,-7px) rotate(-18deg); }
+  64% { transform: var(--scatter-position) translate(-6px,-5px) rotate(calc(var(--rest-tilt) * -1)); }
+  82% { transform: var(--scatter-position) translate(7px,6px) rotate(13deg); }
+}
+@keyframes ritual-cut-top {
+  0% { transform: translate(calc(-50% + var(--release-x,0px)),-54%); }
+  35% { transform: translate(calc(-50% + var(--cut-x,190px)),-60%) rotate(var(--cut-tilt,4deg)); }
+  58% { transform: translate(calc(-50% + var(--cut-x,190px)),-46%) rotate(var(--cut-tilt,4deg)); }
+  100% { transform: translate(-50%,-54%) rotate(0deg); }
+}
+@keyframes ritual-cut-bottom {
+  0%,35% { transform: translate(-50%,-47%); }
+  70% { transform: translate(-50%,-57%); }
+  100% { transform: translate(-50%,-47%); }
+}
+@media (max-width: 680px) {
+  .shuffle-screen .ritual-heading,
+  .cut-screen .ritual-heading { padding-top: 26px; }
+  .shuffle-screen .ritual-heading h1,
+  .cut-screen .ritual-heading h1 { font-size: 33px; margin: 10px 0 12px; }
+  .shuffle-screen .ritual-heading p,
+  .cut-screen .ritual-heading p { font-size: 12px; }
+  .shuffle-screen .shuffle-surface,
+  .cut-screen .cut-stage { height: 304px; margin-top: 8px; }
+  .shuffle-screen .shuffle-glow,
+  .cut-screen .cut-halo { width: 302px; height: 302px; }
+  .shuffle-screen .shuffle-glow::after,
+  .cut-screen .cut-halo::after { inset: 26px; }
+  .shuffle-screen .shuffle-pile,
+  .cut-screen .cut-pile { width: 175px; height: 248px; }
+  .shuffle-screen .shuffle-pile { --scatter-scale: .72; }
+  .shuffle-screen .shuffle-card,
+  .cut-screen .cut-half { width: 136px; }
+  .ritual-hold-feedback { margin-top: 8px; margin-bottom: 26px; }
+  .cut-cue-left { right: calc(50% + 115px); }
+  .cut-cue-right { left: calc(50% + 115px); }
+  .cut-direction-cue .ui-icon { width: 19px; height: 19px; }
+  .cut-direction-cue small { font-size: 9px; }
+  .cut-feedback { margin-bottom: 18px; }
+  .cut-screen .cut-actions { width: min(calc(100% - 44px), 168px); }
+  .cut-screen .cut-button { font-size: 12px; gap: 8px; }
+  .cut-screen .ritual-secondary { min-width: 96px; font-size: 11px; }
+  .cut-screen .cut-count { margin-bottom: 24px; }
+}
+@media (max-height: 740px) and (min-width: 681px) {
+  .shuffle-screen .ritual-heading,
+  .cut-screen .ritual-heading { padding-top: 14px; }
+  .shuffle-screen .shuffle-surface,
+  .cut-screen .cut-stage { height: 312px; }
+  .shuffle-screen .shuffle-glow,
+  .cut-screen .cut-halo { width: 342px; height: 342px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shuffle-screen .shuffle-pile.is-shuffling .shuffle-card,
+  .ritual-is-holding .ritual-orbit-dot,
+  .cut-screen .cut-pile.is-cutting .cut-half { animation: none !important; }
+  .shuffle-screen .shuffle-pile.is-shuffling .shuffle-card { transform: var(--scatter-position) rotate(var(--rest-tilt)); }
+  .cut-screen .cut-pile.is-cutting .cut-top { transform: translate(-50%,-54%); }
+  .cut-screen .cut-pile.is-cutting .cut-bottom { transform: translate(-50%,-47%); }
+  .ritual-key-hint,
+  .ritual-orbit-light,
+  .ritual-orbit-dot,
+  .cut-direction-cue,
+  .cut-gesture-meter i { transition: none; }
+}
