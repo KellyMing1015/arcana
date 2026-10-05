@@ -1,3 +1,5 @@
+import { cardImageURL, cardImageSrcSet } from "./cards.js?v=20261006-images";
+
 const PROVIDER_STORAGE_KEY = "arcana.providers.v1";
 const INITIAL_PROVIDER_ID = "__arcana_initial_provider__";
 const PROFILE_STORAGE_KEY = "arcana.user-profiles.v2";
@@ -803,7 +805,7 @@ function settingsHome() {
 }
 
 function historyThumbnails(record) {
-  return `<div class="history-card-thumbnails ${record.spread === 10 ? "history-card-thumbnails-10" : ""}" aria-label="本次抽到的牌">${record.cards.map((card) => `<figure class="history-card-thumb"><img class="card-art" data-card-image="${escapeHTML(card.id)}" data-image-retry="0" src="/assets/cards/${escapeHTML(card.id)}.webp?v=2" alt="${escapeHTML(card.chinese)}${card.reversed ? "逆位" : "正位"}" loading="lazy" decoding="async" style="transform:rotate(${card.reversed ? 180 : 0}deg)"><figcaption>${escapeHTML(card.chinese)}</figcaption></figure>`).join("")}</div>`;
+  return `<div class="history-card-thumbnails ${record.spread === 10 ? "history-card-thumbnails-10" : ""}" aria-label="本次抽到的牌">${record.cards.map((card) => `<figure class="history-card-thumb"><img class="card-art" data-card-image="${escapeHTML(card.id)}" data-image-retry="0" src="${escapeHTML(cardImageURL(card))}" srcset="${escapeHTML(cardImageSrcSet(card))}" sizes="80px" alt="${escapeHTML(card.chinese)}${card.reversed ? "逆位" : "正位"}" loading="lazy" decoding="async" style="transform:rotate(${card.reversed ? 180 : 0}deg)"><figcaption>${escapeHTML(card.chinese)}</figcaption></figure>`).join("")}</div>`;
 }
 
 function loadAllHistoryRecords() {

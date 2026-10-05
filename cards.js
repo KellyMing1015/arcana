@@ -54,13 +54,18 @@ export const MINOR_CARDS = suits.flatMap((suit) => ranks.map(([english, chinese,
 })));
 export const DECK = [...CARDS, ...MINOR_CARDS];
 
-const CARD_IMAGE_VERSION = "2";
+const CARD_IMAGE_VERSION = "3";
+export const CARD_IMAGE_SIZES = "(max-width: 640px) 160px, 240px";
 
-export function cardImageURL(card, retry = 0) {
+export function cardImageURL(card, retry = 0, width = 640) {
   const retryQuery = retry > 0 ? `&retry=${retry}` : "";
-  return `/assets/cards/${card.id}.webp?v=${CARD_IMAGE_VERSION}${retryQuery}`;
+  return `/assets/cards/${encodeURIComponent(card.id)}.webp?v=${CARD_IMAGE_VERSION}&w=${width}${retryQuery}`;
+}
+
+export function cardImageSrcSet(card, retry = 0) {
+  return [320, 480, 640, 960].map((width) => `${cardImageURL(card, retry, width)} ${width}w`).join(", ");
 }
 
 export function cardFace(card, className = "") {
-  return `<img class="card-art ${className}" data-card-image="${card.id}" data-image-retry="0" src="${cardImageURL(card)}" width="960" height="1646" alt="${card.chinese}塔罗牌" draggable="false" loading="eager" decoding="async" fetchpriority="high">`;
+  return `<img class="card-art ${className}" data-card-image="${card.id}" data-image-retry="0" src="${cardImageURL(card)}" srcset="${cardImageSrcSet(card)}" sizes="${CARD_IMAGE_SIZES}" width="960" height="1646" alt="${card.chinese}塔罗牌" draggable="false" loading="eager" decoding="async" fetchpriority="high">`;
 }

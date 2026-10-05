@@ -15,7 +15,7 @@ import sys
 import time
 import uuid
 from datetime import datetime
-from functools import wraps
+from functools import lru_cache, wraps
 from io import BytesIO
 from pathlib import Path
 from threading import Lock
@@ -59,7 +59,7 @@ ensure_runtime_dependencies()
 
 from dotenv import load_dotenv
 from cryptography.fernet import Fernet, InvalidToken
-from flask import Flask, Response, jsonify, request, send_from_directory, session as flask_session, stream_with_context
+from flask import Flask, Response, jsonify, request, send_file, send_from_directory, session as flask_session, stream_with_context
 from flask_bcrypt import Bcrypt
 from PIL import Image, UnidentifiedImageError
 
@@ -122,6 +122,8 @@ UI_FILES = {
     "rabbit-single-color.png",
     "dove-single-color.png",
 }
+CARD_IMAGE_WIDTHS = {320, 480, 640, 960}
+UI_IMAGE_WIDTHS = {"card-back-engraved.webp": {480}}
 DEV_ORIGINS = {"http://127.0.0.1:4173", "http://localhost:4173"}
 # 线上域名白名单。浏览器看到的是 https://arcana.ououm.com，
 # 但经过 Cloudflare(Flexible) 和 Nginx 转发后，Flask 自己以为是 http://，
@@ -828,24 +830,58 @@ def home():
     return send_from_directory(ROOT, "index.html")
 
 
+@lru_cache(maxsize=128)
+def resized_image(path, width, modified_ns, file_size):
+    """Cache only fixed, smaller variants; source changes invalidate the cache key."""
+    with Image.open(path) as source:
+        if width >= source.width:
+            return None
+        height = max(1, round(source.height * width / source.width))
+        smaller = source.resize((width, height), Image.Resampling.LANCZOS)
+        output = BytesIO()
+        smaller.save(output, format="WEBP", quality=85, method=4)
+    data = output.getvalue()
+    return data, hashlib.sha256(data).hexdigest()
+
+
+def serve_image(directory, filename, allowed_widths):
+    path = directory / filename
+    if not path.is_file():
+        return jsonify(error="图片不存在。"), 404
+    width = request.args.get("w")
+    if width is not None:
+        if width not in {str(value) for value in allowed_widths}:
+            return jsonify(error="图片尺寸不支持。"), 400
+        stat = path.stat()
+        variant = resized_image(str(path), int(width), stat.st_mtime_ns, stat.st_size)
+        if variant is not None:
+            data, etag = variant
+            response = send_file(
+                BytesIO(data), mimetype="image/webp", conditional=True,
+                etag=etag, last_modified=stat.st_mtime,
+                max_age=31536000 if request.args.get("v") else None,
+            )
+        else:
+            response = send_from_directory(directory, filename)
+    else:
+        response = send_from_directory(directory, filename)
+    if request.args.get("v"):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return response
+
+
 @app.get("/assets/cards/<filename>")
 def card_image(filename):
     if not filename.endswith(".webp") or not filename.removesuffix(".webp").replace("-", "").isalnum():
         return jsonify(error="牌面图片不存在。"), 404
-    response = send_from_directory(ROOT / "assets" / "cards", filename)
-    if request.args.get("v"):
-        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
-    return response
+    return serve_image(ROOT / "assets" / "cards", filename, CARD_IMAGE_WIDTHS)
 
 
 @app.get("/assets/ui/<filename>")
 def ui_image(filename):
     if filename not in UI_FILES:
         return jsonify(error="界面图片不存在。"), 404
-    response = send_from_directory(ROOT / "assets" / "ui", filename)
-    if request.args.get("v"):
-        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
-    return response
+    return serve_image(ROOT / "assets" / "ui", filename, UI_IMAGE_WIDTHS.get(filename, set()))
 
 
 @app.get("/<path:filename>")

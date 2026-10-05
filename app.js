@@ -1,7 +1,7 @@
-import { DECK, cardFace, cardImageURL } from "./cards.js?v=20261005-eclipse";
-import { getActiveProvider, getUserInfo, initializeProviderSettings } from "./settings.js?v=20261005-eclipse";
-import { initializeAuth, isLoggedIn, saveCloudReading } from "./auth.js?v=20261005-eclipse";
-import { renderHomeMarkup } from "./home-view.js?v=20261005-eclipse";
+import { DECK, cardFace, cardImageURL, cardImageSrcSet, CARD_IMAGE_SIZES } from "./cards.js?v=20261006-images";
+import { getActiveProvider, getUserInfo, initializeProviderSettings } from "./settings.js?v=20261006-images";
+import { initializeAuth, isLoggedIn, saveCloudReading } from "./auth.js?v=20261006-images";
+import { renderHomeMarkup } from "./home-view.js?v=20261006-images";
 
 const app = document.querySelector("#app");
 const state = {
@@ -196,6 +196,8 @@ function loadCardImageAttempt(card, attempt) {
       finish(image.complete && image.naturalWidth > 0);
     };
     image.onerror = () => finish(false);
+    image.sizes = CARD_IMAGE_SIZES;
+    image.srcset = cardImageSrcSet(card, attempt);
     image.src = cardImageURL(card, attempt);
   });
 }
@@ -249,7 +251,10 @@ function handleCardImageError(event) {
   image.dataset.imageRetry = String(nextAttempt);
   image.classList.add("card-art-retrying");
   window.setTimeout(() => {
-    if (image.isConnected) image.src = cardImageURL(card, nextAttempt);
+    if (image.isConnected) {
+      image.srcset = cardImageSrcSet(card, nextAttempt);
+      image.src = cardImageURL(card, nextAttempt);
+    }
   }, 120 * nextAttempt);
 }
 

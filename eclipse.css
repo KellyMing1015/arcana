@@ -38,7 +38,7 @@ a { color: var(--silver); }
 .ritual-screen { background: transparent; }
 .back-ornament { filter: grayscale(1); display: block; width: 100%; height: 100%; border: 0; background: #09090b; }
 .back-half { position: absolute; inset: 0; clip-path: inset(0 0 50% 0); pointer-events: none; }
-.back-half::before { content: ""; position: absolute; inset: 0; background: url('/assets/ui/card-back-engraved.webp') center/100% 100% no-repeat; transform: translateY(2.213542%); clip-path: inset(7% 7% 7% 7%); }
+.back-half::before { content: ""; position: absolute; inset: 0; background: url('/assets/ui/card-back-engraved.webp?v=20261006-images&w=480') center/100% 100% no-repeat; transform: translateY(2.213542%); clip-path: inset(7% 7% 7% 7%); }
 .back-half-lower { transform: rotate(180deg); }
 .back-ornament::before,.back-ornament::after { display: none; }
 .shuffle-card,.cut-half,.fan-card,.flight-back { background: #111113; border: 1px solid #68687080; color: var(--silver); box-shadow: 0 12px 24px #0009; }

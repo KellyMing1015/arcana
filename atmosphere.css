@@ -2,7 +2,7 @@
 :root {
   --eclipse-edge-rest: 0 0 22px #d4d9ef12,inset 0 0 16px #d4d9ef04;
   --eclipse-edge-active: 0 0 30px #d4d9ef29,inset 0 0 18px #d4d9ef08;
-  --night-sky-image: url('/assets/ui/starfield-night-sparse.webp');
+  --night-sky-image: url('/assets/ui/starfield-night-sparse.webp?v=20261006-images');
 }
 body::before { background:linear-gradient(#05050626,#05050655),var(--night-sky-image) center/cover no-repeat; opacity:.68; }
 body::after { display:none; }

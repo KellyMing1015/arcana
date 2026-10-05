@@ -6,6 +6,7 @@ import { test } from "node:test";
 
 const source = readFileSync(new URL("../app.js", import.meta.url), "utf8");
 const preloadSource = source.slice(source.indexOf("function loadCardImageAttempt("), source.indexOf("function handleCardImageError("));
+const imageHelpers = runInNewContext(readFileSync(new URL("../cards.js", import.meta.url), "utf8").replace(/^export /gm, "") + "\n({cardImageURL, cardImageSrcSet, CARD_IMAGE_SIZES, cardFace})");
 
 function setup() {
   const images = [];
@@ -23,7 +24,7 @@ function setup() {
   }
   const preload = runInNewContext(preloadSource + "\npreloadCardImage", {
     Image,
-    cardImageURL: (card, attempt = 0) => `/assets/cards/${card.id}.webp?v=2${attempt ? `&retry=${attempt}` : ""}`,
+    ...imageHelpers,
     cardImageCache: new Map(),
     state: { selected: [] },
     CARD_IMAGE_RETRY_LIMIT: 2,
@@ -52,6 +53,20 @@ test("慢图四秒后仍只有一次下载，再次预加载复用同一任务",
   assert.equal(preload(card), result);
 });
 
+test("候选预载与显示牌面使用相同响应尺寸，历史可选择较小图片", () => {
+  const { preload, images } = setup();
+  const card = { id: "fool", chinese: "愚者" };
+  preload(card);
+  const markup = imageHelpers.cardFace(card);
+  assert.ok(markup.includes(`src="${images[0].src}"`));
+  assert.ok(markup.includes(`srcset="${images[0].srcset}"`));
+  assert.ok(markup.includes(`sizes="${images[0].sizes}"`));
+  assert.match(images[0].srcset, /w=320 320w/);
+  assert.match(images[0].srcset, /w=480 480w/);
+  assert.match(images[0].srcset, /w=960 960w/);
+  assert.equal(imageHelpers.cardImageURL({ id: '"<bad>' }, 0, 320), '/assets/cards/%22%3Cbad%3E.webp?v=3&w=320');
+});
+
 test("明确下载失败后重试，成功后复用解码结果", async () => {
   const { preload, images } = setup();
   const card = { id: "moon" };
@@ -59,7 +74,8 @@ test("明确下载失败后重试，成功后复用解码结果", async () => {
   images[0].fail();
   await flush();
   assert.equal(images.length, 2);
-  assert.equal(images[1].src, "/assets/cards/moon.webp?v=2&retry=1");
+  assert.equal(images[1].src, "/assets/cards/moon.webp?v=3&w=640&retry=1");
+  assert.equal(images[1].srcset, imageHelpers.cardImageSrcSet(card, 1));
   images[1].load();
   assert.equal(await result, true);
   assert.equal(preload(card), result);

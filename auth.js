@@ -7,7 +7,8 @@ import {
   openSettings,
   personalRail,
   syncAccountSettings,
-} from "./settings.js?v=20261005-eclipse";
+} from "./settings.js?v=20261006-images";
+import { cardImageURL, cardImageSrcSet } from "./cards.js?v=20261006-images";
 
 const LOCAL_HISTORY_PREFIX = "arcana_history_";
 
@@ -226,7 +227,7 @@ function formatCloudTime(value) {
 }
 
 function cloudCards(record) {
-  return `<div class="history-card-thumbnails ${record.cards.length === 10 ? "history-card-thumbnails-10" : ""}">${record.cards.map((card) => `<figure class="history-card-thumb"><img class="card-art" data-card-image="${escapeHTML(card.id)}" data-image-retry="0" src="/assets/cards/${escapeHTML(card.id)}.webp?v=2" alt="${escapeHTML(card.chinese || "塔罗牌")}" loading="lazy" decoding="async" style="transform:rotate(${card.reversed ? 180 : 0}deg)"><figcaption>${escapeHTML(card.chinese || "塔罗牌")}</figcaption></figure>`).join("")}</div>`;
+  return `<div class="history-card-thumbnails ${record.cards.length === 10 ? "history-card-thumbnails-10" : ""}">${record.cards.map((card) => `<figure class="history-card-thumb"><img class="card-art" data-card-image="${escapeHTML(card.id)}" data-image-retry="0" src="${escapeHTML(cardImageURL(card))}" srcset="${escapeHTML(cardImageSrcSet(card))}" sizes="80px" alt="${escapeHTML(card.chinese || "塔罗牌")}" loading="lazy" decoding="async" style="transform:rotate(${card.reversed ? 180 : 0}deg)"><figcaption>${escapeHTML(card.chinese || "塔罗牌")}</figcaption></figure>`).join("")}</div>`;
 }
 
 function historyContent(records) {

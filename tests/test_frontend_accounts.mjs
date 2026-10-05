@@ -4,9 +4,11 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { test } from "node:test";
 
-const settingsSource = readFileSync(new URL("../settings.js", import.meta.url), "utf8").replace(/^export /gm, "");
+const imageHelpers = runInNewContext(readFileSync(new URL("../cards.js", import.meta.url), "utf8").replace(/^export /gm, "") + "\n({cardImageURL, cardImageSrcSet})");
+const withoutImports = (source) => source.replace(/^import \{[\s\S]*?\} from "\.\/[^"\n]+";\n/gm, "");
+const settingsSource = withoutImports(readFileSync(new URL("../settings.js", import.meta.url), "utf8")).replace(/^export /gm, "");
 const authSource = readFileSync(new URL("../auth.js", import.meta.url), "utf8")
-  .replace(/^import \{[\s\S]*?\} from "\.\/settings\.js(?:\?[^"\n]*)?";\n/, "")
+  .replace(/^import \{[\s\S]*?\} from "\.\/[^"\n]+";\n/gm, "")
   .replace(/^export /gm, "");
 
 function storage(initial = {}) {
@@ -44,6 +46,7 @@ function settings(overrides = {}) {
     setEditing(id) { editingUserId = id; },
     setAccount(id) { cloudAccountId = id; },
   })`, {
+    ...imageHelpers,
     localStorage: storage(), document: defaultDocument, window: { addEventListener() {} },
     crypto: { randomUUID: () => "new-profile" }, AbortController, console,
     ...overrides,
@@ -55,6 +58,7 @@ function auth(overrides = {}) {
     updateAccountAvatar, saveCloudReading, renderCloudHistory, getCurrentUser,
     setUser(user) { authUser = user; },
   })`, {
+    ...imageHelpers,
     localStorage: storage(), document: defaultDocument, window: { addEventListener() {} },
     CustomEvent: class { constructor(type, options = {}) { this.type = type; this.detail = options.detail; } },
     normalizeAvatarDataURL: settings().normalizeAvatarDataURL, getGuestAvatar: () => "",
