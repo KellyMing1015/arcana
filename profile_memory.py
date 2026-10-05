@@ -92,7 +92,7 @@ def initialize_tables(connection):
         CREATE INDEX IF NOT EXISTS idx_profile_sessions_scope
         ON profile_memory_sessions(user_id, profile_id, extracted, enabled, created_at);
     """)
-    # Serialize schema checks, ALTERs and the one-time legacy reset across processes.
+    # Serialize schema checks and non-destructive migrations across processes.
     if not connection.in_transaction:
         connection.execute("BEGIN IMMEDIATE")
     note_columns = {row[1] for row in connection.execute("PRAGMA table_info(profile_notes)")}
@@ -103,6 +103,13 @@ def initialize_tables(connection):
     ):
         if name not in note_columns:
             connection.execute(f"ALTER TABLE profile_notes ADD COLUMN {name} {definition}")
+    if old_columns and "topic" not in old_columns:
+        # Keep legacy note IDs, bodies, ownership and timestamps. Their old
+        # category supplies the new short topic; uncategorized notes remain usable.
+        connection.execute(
+            "UPDATE profile_notes SET topic = CASE WHEN LENGTH(TRIM(category)) >= 2 "
+            "THEN SUBSTR(TRIM(category), 1, 4) ELSE '旧便签' END WHERE topic = ''",
+        )
     connection.execute(
         "UPDATE profile_notes SET edited_at = updated_at WHERE user_edited = 1 AND edited_at = ''",
     )
@@ -118,9 +125,6 @@ def initialize_tables(connection):
         "SELECT 1 FROM profile_memory_schema WHERE version = 'full_notes_v2'",
     ).fetchone()
     if not applied:
-        # Explicitly authorized one-time reset of legacy notes, never accounts or readings.
-        if old_columns and not {"topic", "user_edited"}.issubset(old_columns):
-            connection.execute("DELETE FROM profile_notes")
         connection.execute("INSERT INTO profile_memory_schema(version) VALUES ('full_notes_v2')")
         connection.execute(
             "UPDATE profile_memory_sessions SET extracted_revision = revision WHERE extracted = 1",

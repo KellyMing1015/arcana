@@ -4,6 +4,8 @@ import io
 import json
 import os
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -149,7 +151,7 @@ class ProfileMemoryTests(unittest.TestCase):
             memory.initialize_tables(c)
             self.assertEqual(c.execute("SELECT edited_at FROM profile_notes").fetchone()[0], "2026-01-01 00:00:00")
 
-    def test_legacy_notes_clear_once_preserving_users_readings_and_dialogue(self):
+    def test_legacy_migration_preserves_notes_users_readings_and_dialogue(self):
         with sqlite3.connect(os.path.join(self.directory.name, "legacy.db")) as c:
             c.executescript("""
                 CREATE TABLE users(id INTEGER PRIMARY KEY);
@@ -159,22 +161,107 @@ class ProfileMemoryTests(unittest.TestCase):
                 CREATE TABLE profile_notes(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,
                     profile_id TEXT NOT NULL,category TEXT NOT NULL DEFAULT '',text TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
-                INSERT INTO profile_notes(user_id,profile_id,text) VALUES(1,'old','旧碎片');
+                INSERT INTO profile_notes(user_id,profile_id,category,text,created_at,updated_at)
+                    VALUES(1,'old','工作','旧碎片','2026-01-01 00:00:00','2026-01-02 00:00:00');
+                INSERT INTO profile_notes(user_id,profile_id,text) VALUES(1,'other','另一档案的便签');
                 CREATE TABLE profile_memory_sessions(id TEXT PRIMARY KEY,user_id INTEGER NOT NULL,
                     profile_id TEXT NOT NULL,dialogue TEXT NOT NULL,rounds INTEGER NOT NULL DEFAULT 0,
                     extracted INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'pending',
                     enabled INTEGER NOT NULL DEFAULT 1,attempts INTEGER NOT NULL DEFAULT 0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
-                INSERT INTO profile_memory_sessions(id,user_id,profile_id,dialogue) VALUES('old',1,'old','[]');
+                INSERT INTO profile_memory_sessions(id,user_id,profile_id,dialogue,extracted,status)
+                    VALUES('old',1,'old','[]',1,'done');
             """)
+            before = c.execute(
+                "SELECT id,user_id,profile_id,category,text,created_at,updated_at FROM profile_notes ORDER BY id",
+            ).fetchall()
             memory.initialize_tables(c)
-            self.assertEqual(c.execute("SELECT COUNT(*) FROM profile_notes").fetchone()[0], 0)
+            self.assertEqual(c.execute(
+                "SELECT id,user_id,profile_id,category,text,created_at,updated_at FROM profile_notes ORDER BY id",
+            ).fetchall(), before)
+            self.assertEqual(c.execute("SELECT topic FROM profile_notes ORDER BY id").fetchall(),
+                             [('工作',), ('旧便签',)])
             c.execute("INSERT INTO profile_notes(user_id,profile_id,topic,text) VALUES(1,'old','转行','新主题')")
             memory.initialize_tables(c)
-            self.assertEqual(c.execute("SELECT COUNT(*) FROM profile_notes").fetchone()[0], 1)
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM profile_notes").fetchone()[0], 3)
+            self.assertEqual(c.execute(
+                "SELECT id,user_id,profile_id,category,text,created_at,updated_at FROM profile_notes WHERE id <= 2 ORDER BY id",
+            ).fetchall(), before)
             self.assertEqual(c.execute("SELECT COUNT(*) FROM users").fetchone()[0], 1)
             self.assertEqual(c.execute("SELECT question FROM readings").fetchone()[0], "历史问题")
             self.assertEqual(c.execute("SELECT dialogue FROM profile_memory_sessions").fetchone()[0], "[]")
+            self.assertEqual(c.execute(
+                "SELECT extracted,revision,extracted_revision FROM profile_memory_sessions",
+            ).fetchone(), (1, 1, 1))
+
+    def test_partial_legacy_migration_preserves_topics_and_edited_notes(self):
+        for missing in ("topic", "user_edited"):
+            with self.subTest(missing=missing):
+                path = os.path.join(self.directory.name, f"missing-{missing}.db")
+                with sqlite3.connect(path) as c:
+                    c.executescript("""
+                        CREATE TABLE users(id INTEGER PRIMARY KEY);
+                        INSERT INTO users VALUES(1);
+                        CREATE TABLE profile_notes(id INTEGER PRIMARY KEY AUTOINCREMENT,user_id INTEGER NOT NULL,
+                            profile_id TEXT NOT NULL,category TEXT NOT NULL DEFAULT '',text TEXT NOT NULL,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+                    """)
+                    if missing != "topic":
+                        c.execute("ALTER TABLE profile_notes ADD COLUMN topic TEXT NOT NULL DEFAULT ''")
+                    if missing != "user_edited":
+                        c.execute("ALTER TABLE profile_notes ADD COLUMN user_edited INTEGER NOT NULL DEFAULT 0")
+                    c.execute(
+                        "INSERT INTO profile_notes(user_id,profile_id,category,text,updated_at) "
+                        "VALUES(1,'old','人际关系','用户保留的原文。','2026-01-02 00:00:00')",
+                    )
+                    if missing != "topic":
+                        c.execute("UPDATE profile_notes SET topic='关系'")
+                    if missing != "user_edited":
+                        c.execute("UPDATE profile_notes SET user_edited=1")
+                    memory.initialize_tables(c)
+                    before = c.execute("SELECT * FROM profile_notes").fetchall()
+                    memory.initialize_tables(c)
+                    self.assertEqual(c.execute("SELECT * FROM profile_notes").fetchall(), before)
+                    self.assertEqual(c.execute("SELECT text FROM profile_notes").fetchone()[0], '用户保留的原文。')
+                    if missing == "topic":
+                        self.assertEqual(c.execute("SELECT topic,user_edited,edited_at FROM profile_notes").fetchone(),
+                                         ('人际关系', 1, '2026-01-02 00:00:00'))
+                    else:
+                        self.assertEqual(c.execute("SELECT topic FROM profile_notes").fetchone()[0], '关系')
+
+    def test_extracted_and_edited_notes_survive_restart_and_follow_account(self):
+        self.save()
+        self.process(self.output([{"topic": "转行", "text": "你正在考虑换工作。"}]))
+        note_id = self.notes()[0]["id"]
+        response = self.client.patch(f"/api/profile-notes/{note_id}", json={
+            "profile_id": "profile-ou", "topic": "转行", "text": "你正在整理转行作品。",
+        })
+        self.assertEqual(response.status_code, 200)
+        expected = self.client.get("/api/profile-notes?profile_id=profile-ou").get_json()["notes"]
+        self.assertEqual(expected[0]["text"], "你正在整理转行作品。")
+        self.assertTrue(expected[0]["user_edited"])
+        # A fresh server process and browser session use only the persisted DB.
+        environment = dict(os.environ, ARCANA_DATABASE=self.database_path)
+        script = """
+import json
+import app
+client = app.app.test_client()
+with client.session_transaction() as session:
+    session['user_id'] = 1
+own = client.get('/api/profile-notes?profile_id=profile-ou')
+other_profile = client.get('/api/profile-notes?profile_id=other')
+with client.session_transaction() as session:
+    session['user_id'] = 2
+other_account = client.get('/api/profile-notes?profile_id=profile-ou')
+client.post('/api/logout')
+anonymous = client.get('/api/profile-notes?profile_id=profile-ou')
+print(json.dumps([own.status_code, own.get_json()['notes'],
+                 other_profile.get_json()['notes'], other_account.get_json()['notes'],
+                 anonymous.status_code]))
+"""
+        result = subprocess.run([sys.executable, "-c", script], cwd=website.ROOT, env=environment,
+                                check=True, capture_output=True, text=True, timeout=15)
+        self.assertEqual(json.loads(result.stdout), [200, expected, [], [], 401])
 
     def test_complete_set_replaces_fragments_and_stays_scoped(self):
         self.insert_note("你在准备转行。")
