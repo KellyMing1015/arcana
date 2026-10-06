@@ -226,19 +226,20 @@
 .conversation-toolbar .conversation-back { min-height: 44px; padding: 4px 0; color: #b4b4bd; font-size: 14px; }
 .conversation-messages { padding: 20px 4px 18px; gap: 14px; background: transparent; scrollbar-color: #55555f transparent; scrollbar-gutter: auto; }
 .conversation-message { gap: 0; }
-.chat-message-body { min-width: 0; max-width: min(84%, 610px); gap: 0; }
-.conversation-user .chat-message-body { max-width: min(84%, 550px); }
-.chat-reply-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; }
+.conversation-message[hidden] { display: none; }
+.chat-message-body { display: flex; flex-direction: column; align-items: flex-start; width: fit-content; min-width: 0; max-width: min(84%, 610px); gap: 0; }
+.conversation-user .chat-message-body { align-items: flex-end; max-width: min(84%, 550px); }
+.chat-reply-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; width: 100%; }
 .conversation-reader .chat-bubble, .conversation-user .chat-bubble {
   padding: 7px 13px; border: 1px solid #d6d7e130; border-radius: 22px;
   color: #eeedf2; background: #17191fd9;
   box-shadow: inset 0 1px 0 #ffffff0d, 0 3px 12px #0000001f;
-  max-width: 100%; min-width: 40px;
+  width: fit-content; max-width: 100%; min-width: 40px;
   backdrop-filter: blur(12px) saturate(110%); -webkit-backdrop-filter: blur(12px) saturate(110%);
 }
 .conversation-reader .chat-bubble { border-bottom-left-radius: 4px; animation: eclipse-bubble .2s var(--ease); }
 .conversation-user .chat-bubble { border-bottom-right-radius: 4px; background: #30333dd9; border-color: #dddde93b; }
-.conversation-message p, .conversation-reader p { margin: 0; font: 14px/1.5 var(--serif); color: #eeedf2; letter-spacing: 0; overflow-wrap: anywhere; text-wrap: pretty; }
+.conversation-message p, .conversation-reader p { margin: 0; font: 15px/1.5 var(--serif); color: #eeedf2; letter-spacing: 0; overflow-wrap: anywhere; text-wrap: wrap; }
 .conversation-message.is-error .chat-bubble { padding: 7px 13px; border-radius: 22px 22px 22px 4px; background: #24201ed9; border-color: #bcb0a542; }
 .conversation-message.is-error p { color: #ddd4cc; }
 .conversation-message.is-stopped .chat-bubble { opacity: 1; border-style: solid; }
@@ -359,7 +360,7 @@
   .chat-message-body { max-width: 84%; }
   .conversation-user .chat-message-body { max-width: 84%; }
   .conversation-reader .chat-bubble, .conversation-user .chat-bubble, .conversation-message.is-error .chat-bubble { padding: 7px 12px; }
-  .conversation-message p, .conversation-reader p { font-size: 14px; line-height: 1.5; }
+  .conversation-message p, .conversation-reader p { font-size: 15px; line-height: 1.5; }
   .conversation-compose { margin: 0 0 max(12px, env(safe-area-inset-bottom)); padding: 7px 8px 4px; }
   .conversation-compose textarea { font-size: 16px; padding: 9px 3px; }
   .conversation-round-count { font-size: 12px; }

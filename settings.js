@@ -1,4 +1,4 @@
-import { cardImageURL, cardImageSrcSet } from "./cards.js?v=20261006-session";
+import { cardImageURL, cardImageSrcSet } from "./cards.js?v=20261006-bubbles";
 
 const PROVIDER_STORAGE_KEY = "arcana.providers.v1";
 const INITIAL_PROVIDER_ID = "__arcana_initial_provider__";

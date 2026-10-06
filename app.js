@@ -1,8 +1,8 @@
-import { DECK, cardFace, cardImageURL, cardImageSrcSet, CARD_IMAGE_SIZES } from "./cards.js?v=20261006-session";
-import { getActiveProvider, getUserInfo, initializeProviderSettings } from "./settings.js?v=20261006-session";
-import { getCurrentUser, initializeAuth, isLoggedIn, saveCloudReading } from "./auth.js?v=20261006-session";
-import { renderHomeMarkup } from "./home-view.js?v=20261006-session";
-import { READING_SESSION_KEY, confirmReadingAction, loadReadingSnapshot, reconcileConversationMessages, saveReadingSnapshot } from "./reading-session.js?v=20261006-session";
+import { DECK, cardFace, cardImageURL, cardImageSrcSet, CARD_IMAGE_SIZES } from "./cards.js?v=20261006-bubbles";
+import { getActiveProvider, getUserInfo, initializeProviderSettings } from "./settings.js?v=20261006-bubbles";
+import { getCurrentUser, initializeAuth, isLoggedIn, saveCloudReading } from "./auth.js?v=20261006-bubbles";
+import { renderHomeMarkup } from "./home-view.js?v=20261006-bubbles";
+import { READING_SESSION_KEY, confirmReadingAction, loadReadingSnapshot, reconcileConversationMessages, saveReadingSnapshot } from "./reading-session.js?v=20261006-bubbles";
 
 const app = document.querySelector("#app");
 const state = {
@@ -1138,7 +1138,51 @@ function createReadingOutput(actions) {
 }
 
 function replyParagraphs(text) {
-  return String(text).split(/\n[ \t]*\n+/).filter((paragraph) => paragraph.trim());
+  const paragraphs = String(text).replace(/\r\n?/g, "\n")
+    .split(/\n[^\S\n]*\n+/u).map((paragraph) => paragraph.trim()).filter(Boolean);
+  return paragraphs.flatMap((paragraph) => {
+    // Lists and code keep their deliberate lines. Ordinary conversation follows
+    // sentence pauses, with comma pauses only when a sentence becomes very long.
+    if (/^(?:```|[-*] |\d+[.)] )/m.test(paragraph)) return [paragraph];
+    const protectedRanges = [...paragraph.matchAll(/https?:\/\/[^\s<>。！？，；：“”‘’「」『』（）【】"`]+|www\.[^\s<>。！？，；：“”‘’「」『』（）【】"`]+|`[^`\n]*`/gu)]
+      .map((match) => [match.index, match.index + match[0].length]);
+    const sentences = [];
+    let start = 0;
+    for (let index = 0; index < paragraph.length; index += 1) {
+      const protectedRange = protectedRanges.find(([from, to]) => index >= from && index < to);
+      if (protectedRange) { index = protectedRange[1] - 1; continue; }
+      const char = paragraph[index];
+      const next = paragraph[index + 1] || "";
+      const dot = char === "." && (!next || /\s/u.test(next))
+        && !/(?:\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|vs|etc|e\.g|i\.e)|\b[A-Za-z])$/i.test(paragraph.slice(start, index));
+      if (!/[。！？!?]/u.test(char) && !dot) continue;
+      let end = index + 1;
+      while (end < paragraph.length && /[。！？!?.”’"'」』）)\]】]/u.test(paragraph[end])) end += 1;
+      const sentence = paragraph.slice(start, end).trim();
+      if (sentence) sentences.push(sentence);
+      start = end;
+      index = end - 1;
+    }
+    const tail = paragraph.slice(start).trim();
+    if (tail) sentences.push(tail);
+    return sentences.flatMap((sentence) => {
+      if (/https?:\/\/|www\.|`/u.test(sentence)) return [sentence];
+      const bubbles = [];
+      let remaining = sentence;
+      while (Array.from(remaining).length > 64) {
+        const pause = [...remaining.matchAll(/[，,；;：:]/gu)].find((match) => {
+          const end = match.index + 1;
+          return Array.from(remaining.slice(0, end)).length >= 28
+            && Array.from(remaining.slice(end).trim()).length >= 12;
+        });
+        if (!pause) break;
+        bubbles.push(remaining.slice(0, pause.index + 1).trim());
+        remaining = remaining.slice(pause.index + 1).trim();
+      }
+      if (remaining) bubbles.push(remaining);
+      return bubbles;
+    });
+  });
 }
 
 function outputText(output) {
@@ -1153,6 +1197,8 @@ function renderOutputText(output, text) {
   // The transcript keeps its exact newlines; the bubbles are only a visual view of it.
   output.dataset.replyText = text;
   const paragraphs = replyParagraphs(text);
+  const message = output.closest(".conversation-message");
+  if (message) message.hidden = paragraphs.length === 0;
   const bubbles = [...output.children];
   paragraphs.forEach((paragraph, index) => {
     let bubble = bubbles[index];
@@ -1216,7 +1262,8 @@ async function streamToOutput(response, output, onPayload = () => {}, onFirstCon
     if (characters.length) {
       rendered += characters.shift();
       renderOutputText(output, rendered);
-      if (pacedBubbles && /\S[^\n]*\n[ \t]*\n$/.test(rendered)) nextBubbleAt = performance.now() + 180;
+      if (pacedBubbles && output.children.length > 1
+        && output.children[output.children.length - 1].textContent.length === 1) nextBubbleAt = performance.now() + 180;
       if (output.classList.contains("reading-output")) output.scrollTop = output.scrollHeight;
       const messages = output.closest(".conversation-messages");
       if (messages) messages.scrollTop = messages.scrollHeight;
@@ -1405,10 +1452,13 @@ function conversationBubble(message) {
   const reply = message.loading
     ? `<div class="chat-bubble">${copy}</div>`
     : replyParagraphs(message.text || "").map((paragraph) => `<div class="chat-bubble"><p class="chat-bubble-copy">${escapeHTML(paragraph)}</p></div>`).join("");
+  // HTML normalizes literal CRLF in attributes; an entity keeps the raw transcript exact.
+  const replyText = escapeHTML(message.text || "").replace(/\r/g, "&#13;");
   const body = user
     ? `<div class="chat-message-body"><div class="chat-bubble">${attachments}${copy}</div></div>`
-    : `<div class="chat-message-body"><div class="chat-reply-copy" data-reply-text="${escapeHTML(message.text || "")}">${reply}</div>${retryAvailable ? `<button class="retry-follow-up" data-retry-follow-up type="button">${uiIcon("restart")}<span>重试这次提问</span></button>` : ""}</div>`;
-  return `<article class="conversation-message ${user ? "conversation-user" : "conversation-reader"}${errorClass}${stoppedClass}">${body}</article>`;
+    : `<div class="chat-message-body"><div class="chat-reply-copy" data-reply-text="${replyText}">${reply}</div>${retryAvailable ? `<button class="retry-follow-up" data-retry-follow-up type="button">${uiIcon("restart")}<span>重试这次提问</span></button>` : ""}</div>`;
+  const empty = !user && !message.loading && !reply;
+  return `<article class="conversation-message ${user ? "conversation-user" : "conversation-reader"}${errorClass}${stoppedClass}"${empty ? " hidden" : ""}>${body}</article>`;
 }
 
 function drawerCard(card, index) {
