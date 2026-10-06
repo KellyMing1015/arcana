@@ -18,7 +18,8 @@ from datetime import datetime
 from functools import lru_cache, wraps
 from io import BytesIO
 from pathlib import Path
-from threading import Lock
+from queue import Empty, Full, Queue
+from threading import Event, Lock, Thread
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
@@ -63,7 +64,7 @@ from flask import Flask, Response, jsonify, request, send_file, send_from_direct
 from flask_bcrypt import Bcrypt
 from PIL import Image, UnidentifiedImageError
 
-from llm import LLMError, friendly_error, iter_chat_text, list_models, open_chat_stream
+from llm import LLMError, friendly_error, iter_chat_text, list_models, open_chat_stream, validate_chat_configuration
 import profile_memory
 
 
@@ -95,6 +96,7 @@ FRAMEWORK_MARKER_PATTERN = re.compile(
 )
 ZODIACS = {"白羊座", "金牛座", "双子座", "巨蟹座", "狮子座", "处女座", "天秤座", "天蝎座", "射手座", "摩羯座", "水瓶座", "双鱼座"}
 MAX_FOLLOW_UPS = 8
+SSE_HEARTBEAT_SECONDS = 10
 CONVERSATION_TTL = 6 * 60 * 60
 MAX_CONVERSATIONS = 200
 MAX_FOLLOW_UP_IMAGES = 3
@@ -138,6 +140,7 @@ EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 SPREAD_TYPES = {"单牌", "三牌阵", "凯尔特十字"}
 
 app = Flask(__name__, static_folder=None)
+app.logger.setLevel("INFO")
 app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
 app.config["DATABASE"] = str(DATABASE_PATH)
 app.config["SECRET_KEY"] = os.getenv("ARCANA_SECRET_KEY") or secrets.token_hex(32)
@@ -1256,6 +1259,97 @@ def sse(payload):
     return "data: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
 
 
+def chat_events_with_heartbeat(messages, provider, transform, request_id, stage):
+    """上游的等待不阻塞下游心跳；工作线程只读取，不接触 Flask 请求或保存会话。"""
+    events = Queue(maxsize=1)
+    cancelled = Event()
+    started_at = time.monotonic()
+
+    class StreamCancelled(Exception):
+        pass
+
+    def publish(kind, value=None):
+        while not cancelled.is_set():
+            try:
+                events.put((kind, value), timeout=0.1)
+                return True
+            except Full:
+                continue
+        return False
+
+    def read_upstream():
+        upstream = None
+        first_text = False
+        try:
+            app.logger.info("chat request_id=%s stage=%s phase=opening", request_id, stage)
+            upstream = open_chat_stream(messages, provider)
+            if cancelled.is_set():
+                return
+            app.logger.info(
+                "chat request_id=%s stage=%s phase=upstream_open elapsed_ms=%d",
+                request_id, stage, int((time.monotonic() - started_at) * 1000),
+            )
+
+            def active_lines():
+                # 注释/推理块不产出正文，也要响应取消，避免持续心跳使工作线程滞留。
+                for raw_line in upstream:
+                    if cancelled.is_set():
+                        raise StreamCancelled()
+                    yield raw_line
+
+            for event in transform(iter_chat_text(active_lines())):
+                visible_text = event.get("content") if isinstance(event, dict) else event
+                if visible_text and not first_text:
+                    first_text = True
+                    app.logger.info(
+                        "chat request_id=%s stage=%s phase=first_text elapsed_ms=%d",
+                        request_id, stage, int((time.monotonic() - started_at) * 1000),
+                    )
+                if not publish("event", event):
+                    return
+        except Exception as error:
+            if cancelled.is_set():
+                return
+            cause = error.__cause__ or error
+            app.logger.warning(
+                "chat request_id=%s stage=%s phase=upstream_error error_type=%s cause_type=%s status=%s upstream_status=%s elapsed_ms=%d",
+                request_id, stage, type(error).__name__, type(cause).__name__,
+                friendly_error(error).status_code, getattr(cause, "code", "-"),
+                int((time.monotonic() - started_at) * 1000),
+            )
+            publish("error", error)
+        finally:
+            if upstream is not None:
+                try:
+                    upstream.close()
+                except Exception as error:
+                    app.logger.warning(
+                        "chat request_id=%s stage=%s phase=close_error error_type=%s",
+                        request_id, stage, type(error).__name__,
+                    )
+            publish("end")
+
+    worker = Thread(target=read_upstream, name="arcana-chat-stream", daemon=True)
+    worker.start()
+    try:
+        # 先把响应和一个合法 SSE 注释发出去，首字慢时代理也能看到连接仍活着。
+        yield None
+        while True:
+            try:
+                kind, value = events.get(timeout=SSE_HEARTBEAT_SECONDS)
+            except Empty:
+                yield None
+                continue
+            if kind == "end":
+                return
+            if kind == "error":
+                raise value
+            yield value
+    finally:
+        # 断开后停止排队和保存；阻塞中的上游读取最迟在其读取超时后关闭。
+        cancelled.set()
+
+
 def extract_framework_opening(opening):
     """读取并清除模型输出中的内部三牌框架标记。"""
     match = FRAMEWORK_MARKER_PATTERN.search(opening)
@@ -1360,6 +1454,7 @@ def reading():
     try:
         payload = request.get_json(silent=True)
         question, spread, cards = validate_payload(payload)
+        validate_chat_configuration(payload.get("provider"))
         request_spoken_at = time.time()
         raw_user_info = payload.get("userInfo")
         user_info = normalize_user_info(raw_user_info)
@@ -1394,16 +1489,6 @@ def reading():
                 messages[0]["content"] += "\n\n" + memory
         if notes_prompt:
             messages[0]["content"] += "\n\n" + notes_prompt
-        upstream = open_chat_stream(messages, payload.get("provider"))
-        chunks = iter_reading_events(iter_chat_text(upstream), spread)
-        try:
-            first = next(chunks, None)
-        except Exception:
-            upstream.close()
-            raise
-        if first is None:
-            upstream.close()
-            raise LLMError("中转站没有返回解读文字，请检查所选模型。")
     except Exception as error:
         friendly = friendly_error(error)
         return jsonify(error=friendly.message), friendly.status_code
@@ -1412,13 +1497,17 @@ def reading():
     def generate():
         answer = []
         completed = False
+        events = chat_events_with_heartbeat(
+            messages, payload.get("provider"), lambda chunks: iter_reading_events(chunks, spread),
+            conversation_id, "reading",
+        )
         try:
             yield sse({"conversationId": conversation_id})
-            yield sse(first)
-            has_text = bool(first.get("content"))
-            if first.get("content"):
-                answer.append(first["content"])
-            for event in chunks:
+            has_text = False
+            for event in events:
+                if event is None:
+                    yield ": keep-alive\n\n"
+                    continue
                 yield sse(event)
                 has_text = has_text or bool(event.get("content"))
                 if event.get("content"):
@@ -1447,14 +1536,16 @@ def reading():
                     cleanup_conversations()
                 persist_profile_conversation(conversation_id, conversation)
                 completed = True
+                app.logger.info("chat request_id=%s stage=reading phase=completed rounds=0", conversation_id)
                 yield sse({"done": True, "rounds": 0, "closed": False})
             else:
                 yield sse({"error": "中转站没有返回解读文字，请检查所选模型。"})
         except Exception as error:
             yield sse({"error": friendly_error(error).message})
         finally:
-            upstream.close()
+            events.close()
             if not completed:
+                app.logger.info("chat request_id=%s stage=reading phase=not_committed", conversation_id)
                 with CONVERSATION_LOCK:
                     CONVERSATIONS.pop(conversation_id, None)
             else:
@@ -1474,7 +1565,7 @@ def follow_up():
         return Response(status=204)
 
     conversation_id = None
-    upstream = None
+    replay = None
     try:
         payload = request.get_json(silent=True)
         if not isinstance(payload, dict):
@@ -1488,6 +1579,17 @@ def follow_up():
         if not isinstance(message, str):
             raise LLMError("追问数据格式不正确。", 400)
         message = message.strip()
+        request_id = payload.get("requestId")
+        if request_id is not None and (
+            not isinstance(request_id, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{32,64}", request_id)
+        ):
+            raise LLMError("这条追问的编号无效，请重新发送。", 400)
+        request_fingerprint = hashlib.sha256(json.dumps({
+            "message": message, "images": images, "userInfo": payload.get("userInfo"),
+            "provider": payload.get("provider"),
+        }, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
+        log_request_id = request_id or uuid.uuid4().hex
+        validate_chat_configuration(payload.get("provider"))
         request_spoken_at = time.time()
         if not message and not images:
             raise LLMError("请输入你想继续问的内容，或上传一张图片。", 400)
@@ -1509,6 +1611,24 @@ def follow_up():
                 raise LLMError("请登录创建这次牌局的账号，或重新抽牌。", 403)
             if session["busy"]:
                 raise LLMError("塔罗师正在回答上一条追问，请稍等。", 409)
+            previous = session.get("last_completed_request")
+            if request_id and previous and previous["request_id"] == request_id:
+                if previous["fingerprint"] != request_fingerprint:
+                    raise LLMError("这条追问的内容已改变，请重新发送。", 409)
+                replay = dict(previous)
+                session["updated_at"] = time.time()
+            if replay:
+                app.logger.info(
+                    "chat request_id=%s stage=follow_up phase=replayed rounds=%d",
+                    log_request_id, replay["rounds"],
+                )
+                return Response(
+                    sse({"content": replay["answer"]}) + sse({
+                        "done": True, "rounds": replay["rounds"], "closed": replay["closed"],
+                    }),
+                    content_type="text/event-stream; charset=utf-8",
+                    headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+                )
             if session["rounds"] >= MAX_FOLLOW_UPS:
                 raise LLMError("这次牌局已经完成八轮追问，请重新抽牌。", 409)
             if "userInfo" in payload and session.get("notes_enabled") and (
@@ -1546,30 +1666,22 @@ def follow_up():
             session["busy"] = True
             session["updated_at"] = time.time()
 
-        try:
-            upstream = open_chat_stream(messages, payload.get("provider"))
-            chunks = iter(iter_follow_up_text(iter_chat_text(upstream)))
-            first = next(chunks, None)
-        except Exception:
-            reset_conversation_busy(conversation_id)
-            if upstream:
-                upstream.close()
-            raise
-        if first is None:
-            reset_conversation_busy(conversation_id)
-            upstream.close()
-            raise LLMError("中转站没有返回回应，请检查所选模型。")
     except Exception as error:
         friendly = friendly_error(error)
         return jsonify(error=friendly.message), friendly.status_code
 
     @stream_with_context
     def generate_follow_up():
-        answer = [first]
+        answer = []
         completed = False
+        events = chat_events_with_heartbeat(
+            messages, payload.get("provider"), iter_follow_up_text, log_request_id, "follow_up",
+        )
         try:
-            yield sse({"content": first})
-            for text in chunks:
+            for text in events:
+                if text is None:
+                    yield ": keep-alive\n\n"
+                    continue
                 answer.append(text)
                 yield sse({"content": text})
             response_text = without_summary("".join(answer)).rstrip()
@@ -1594,18 +1706,31 @@ def follow_up():
                             {"role": "user", "content": message, "spoken_at": request_spoken_at},
                             {"role": "assistant", "content": response_text},
                         ])
+                    if request_id:
+                        session["last_completed_request"] = {
+                            "request_id": request_id, "fingerprint": request_fingerprint,
+                            "answer": response_text, "rounds": next_round,
+                            "closed": next_round >= MAX_FOLLOW_UPS,
+                        }
+                    else:
+                        session.pop("last_completed_request", None)
                     conversation = dict(session)
             if session_missing:
                 yield sse({"error": "这次牌局已经失效，请重新抽牌。"})
                 return
             persist_profile_conversation(conversation_id, conversation)
             completed = True
+            app.logger.info(
+                "chat request_id=%s stage=follow_up phase=completed rounds=%d",
+                log_request_id, next_round,
+            )
             yield sse({"done": True, "rounds": next_round, "closed": next_round >= MAX_FOLLOW_UPS})
         except Exception as error:
             yield sse({"error": friendly_error(error).message})
         finally:
-            upstream.close()
+            events.close()
             if not completed:
+                app.logger.info("chat request_id=%s stage=follow_up phase=not_committed", log_request_id)
                 reset_conversation_busy(conversation_id)
             else:
                 schedule_profile_conversation(conversation_id, conversation)

@@ -11,6 +11,7 @@ from urllib.request import Request, urlopen
 
 
 TIMEOUT_SECONDS = 60
+CHAT_STREAM_TIMEOUT_SECONDS = 120
 TRANSIENT_HTTP_CODES = {502, 503, 504}
 logger = logging.getLogger(__name__)
 
@@ -101,18 +102,23 @@ def friendly_error(error):
     if isinstance(error, LLMError):
         return error
     if isinstance(error, (socket.timeout, TimeoutError)):
-        return LLMError("连接中转站超时（60 秒），请稍后重试。", 504)
+        return LLMError("连接中转站超时，请稍后重试。", 504)
     if isinstance(error, URLError):
         if isinstance(error.reason, (socket.timeout, TimeoutError)):
-            return LLMError("连接中转站超时（60 秒），请稍后重试。", 504)
+            return LLMError("连接中转站超时，请稍后重试。", 504)
         return LLMError("无法连接中转站，请检查 LLM_BASE_URL 和网络连接。", 502)
     if isinstance(error, OSError):
         return LLMError("连接中转站时中断，请稍后重试。", 502)
     return LLMError("解读暂时失败，请稍后重试。", 502)
 
 
+def validate_chat_configuration(provider=None):
+    """仅检查配置，保持输入错误在流式响应之前返回。"""
+    _settings(provider)
+
+
 def open_chat_stream(messages, provider=None):
-    """连接上游。HTTP 状态错误在返回 Flask SSE 前就会被捕获。"""
+    """打开上游连接，把 HTTP 和网络错误转换成可向用户展示的 LLMError。"""
     base_url, api_key, model = _settings(provider)
     body = json.dumps({
         "model": model,
@@ -133,7 +139,7 @@ def open_chat_stream(messages, provider=None):
     # Never replay a response that has already started generating text.
     for attempt in range(2):
         try:
-            return urlopen(request, timeout=TIMEOUT_SECONDS)
+            return urlopen(request, timeout=CHAT_STREAM_TIMEOUT_SECONDS)
         except HTTPError as error:
             error.close()
             if attempt == 0 and error.code in TRANSIENT_HTTP_CODES:

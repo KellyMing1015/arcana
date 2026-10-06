@@ -7,8 +7,8 @@ import {
   openSettings,
   personalRail,
   syncAccountSettings,
-} from "./settings.js?v=20261006-images";
-import { cardImageURL, cardImageSrcSet } from "./cards.js?v=20261006-images";
+} from "./settings.js?v=20261006-conversation";
+import { cardImageURL, cardImageSrcSet } from "./cards.js?v=20261006-conversation";
 
 const LOCAL_HISTORY_PREFIX = "arcana_history_";
 

@@ -1,7 +1,7 @@
-import { DECK, cardFace, cardImageURL, cardImageSrcSet, CARD_IMAGE_SIZES } from "./cards.js?v=20261006-images";
-import { getActiveProvider, getUserInfo, initializeProviderSettings } from "./settings.js?v=20261006-images";
-import { initializeAuth, isLoggedIn, saveCloudReading } from "./auth.js?v=20261006-images";
-import { renderHomeMarkup } from "./home-view.js?v=20261006-images";
+import { DECK, cardFace, cardImageURL, cardImageSrcSet, CARD_IMAGE_SIZES } from "./cards.js?v=20261006-conversation";
+import { getActiveProvider, getUserInfo, initializeProviderSettings } from "./settings.js?v=20261006-conversation";
+import { initializeAuth, isLoggedIn, saveCloudReading } from "./auth.js?v=20261006-conversation";
+import { renderHomeMarkup } from "./home-view.js?v=20261006-conversation";
 
 const app = document.querySelector("#app");
 const state = {
@@ -153,6 +153,7 @@ function uiIcon(name) {
     question: '<circle cx="12" cy="12" r="8.5"/><path d="M9.5 9.2a2.5 2.5 0 0 1 4.8 1c0 1.8-2.3 2-2.3 3.6"/><path d="M12 17h.01"/>',
     image: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m3 16 5-5 4 4 4-6 5 7"/>',
     pause: '<path d="M9 6v12M15 6v12"/>',
+    restart: '<path d="M4 10a8 8 0 1 1 2 8M4 4v6h6"/>',
     close: '<path d="m6 6 12 12M18 6 6 18"/>',
     cards: '<path d="M8 4h11v16H8zM5 7H3v14h11v-1"/><circle cx="13.5" cy="12" r="3"/>',
   };
@@ -1102,6 +1103,12 @@ async function streamToOutput(response, output, onPayload = () => {}, onFirstCon
       if (streamEnded) break;
       buffer += decoder.decode(value, { stream: true });
       consumeBuffer();
+      // The server's done event is the final confirmation. Waiting for a separate
+      // network EOF can turn a complete reply into a false failure on reconnect.
+      if (done) {
+        await reader.cancel().catch(() => {});
+        break;
+      }
     }
     buffer += decoder.decode();
     consumeBuffer();
@@ -1157,7 +1164,7 @@ async function fetchReading(output, onFirstContent, signal) {
   return reading;
 }
 
-async function fetchFollowUp(message, images, output, signal, onFirstContent) {
+async function fetchFollowUp(message, images, output, signal, onFirstContent, requestId = undefined) {
   const provider = getActiveProvider();
   let completion = null;
   const response = await fetch("/api/follow-up", {
@@ -1168,6 +1175,7 @@ async function fetchFollowUp(message, images, output, signal, onFirstContent) {
       message,
       images,
       userInfo: getUserInfo(),
+      ...(requestId ? { requestId } : {}),
       ...(provider ? { provider } : {}),
     }),
     signal,
@@ -1209,7 +1217,7 @@ function conversationBubble(message) {
     : replyParagraphs(message.text || "").map((paragraph) => `<div class="chat-bubble"><p class="chat-bubble-copy">${escapeHTML(paragraph)}</p></div>`).join("");
   const body = user
     ? `<div class="chat-message-body"><div class="chat-bubble">${attachments}${copy}</div></div>`
-    : `<div class="chat-message-body"><div class="chat-reply-copy" data-reply-text="${escapeHTML(message.text || "")}">${reply}</div></div>`;
+    : `<div class="chat-message-body"><div class="chat-reply-copy" data-reply-text="${escapeHTML(message.text || "")}">${reply}</div>${message.error ? `<button class="retry-follow-up" data-retry-follow-up type="button">${uiIcon("restart")}<span>重试这次提问</span></button>` : ""}</div>`;
   return `<article class="conversation-message ${user ? "conversation-user" : "conversation-reader"}${errorClass}${stoppedClass}">${body}</article>`;
 }
 
@@ -1240,6 +1248,21 @@ function appendConversationMessage(messages, message) {
   messages.append(element);
   messages.scrollTop = messages.scrollHeight;
   return element.querySelector(".chat-reply-copy") || element.querySelector(".chat-bubble-copy");
+}
+
+function replaceFailedFollowUp(messages) {
+  const answerRecord = state.chatMessages.at(-1);
+  const userRecord = state.chatMessages.at(-2);
+  if (!answerRecord?.error || userRecord?.role !== "user") return null;
+  // Only the failed turn is replaced; earlier successful replies stay in place.
+  state.chatMessages.splice(-2);
+  messages.lastElementChild?.remove();
+  messages.lastElementChild?.remove();
+  return userRecord;
+}
+
+function followUpRequestSignature(message, images) {
+  return JSON.stringify({ message, images, userInfo: getUserInfo(), provider: getActiveProvider() });
 }
 
 function blobAsDataURL(blob) {
@@ -1282,6 +1305,18 @@ function bindConversationForm(screen) {
   const status = screen.querySelector("#follow-up-status");
   const messages = screen.querySelector("#conversation-messages");
   let selectedImages = [];
+
+  messages.addEventListener("click", (event) => {
+    const retry = event.target.closest("[data-retry-follow-up]");
+    if (!retry || activeConversationRequest || state.conversationClosed) return;
+    const failedAnswer = state.chatMessages.at(-1);
+    const failedUser = state.chatMessages.at(-2);
+    if (!failedAnswer?.error || failedUser?.role !== "user") return;
+    input.value = failedUser.message ?? failedUser.text;
+    selectedImages = (failedUser.images || []).map((dataUrl, index) => ({ name: `图片 ${index + 1}`, dataUrl }));
+    renderImagePreview();
+    form.requestSubmit();
+  });
 
   function renderImagePreview() {
     imagePreview.hidden = !selectedImages.length;
@@ -1356,8 +1391,12 @@ function bindConversationForm(screen) {
     stopButton.hidden = false;
     endButton.disabled = true;
     imageInput.disabled = true;
-    status.textContent = "塔罗师正在回应...";
-    const userRecord = { role: "user", text: message || "发送了图片", images };
+    status.textContent = "";
+    const failedUser = replaceFailedFollowUp(messages);
+    const requestSignature = followUpRequestSignature(message, images);
+    const requestId = failedUser?.requestSignature === requestSignature && failedUser.requestId
+      ? failedUser.requestId : crypto.randomUUID();
+    const userRecord = { role: "user", text: message || "发送了图片", message, images, requestId, requestSignature };
     const answerRecord = { role: "assistant", text: "" };
     state.chatMessages.push(userRecord, answerRecord);
     appendConversationMessage(messages, userRecord);
@@ -1365,10 +1404,10 @@ function bindConversationForm(screen) {
     const controller = new AbortController();
     activeConversationRequest = controller;
     try {
-      const completion = await fetchFollowUp(message, images, answerText, controller.signal, () => { renderOutputText(answerText, ""); });
+      const completion = await fetchFollowUp(message, images, answerText, controller.signal, () => { renderOutputText(answerText, ""); }, requestId);
       answerRecord.text = outputText(answerText);
       const remaining = Math.max(0, 8 - state.followUpCount);
-      screen.querySelector("#follow-up-count").textContent = remaining ? `还可以追问 ${remaining} 轮` : "本次牌局已完成 8 轮追问";
+      screen.querySelector("#follow-up-count").textContent = remaining ? `剩余 ${remaining} 轮追问` : "已完成 8 轮追问";
       if (completion.closed) {
         state.conversationClosed = true;
         input.disabled = true;
@@ -1389,7 +1428,7 @@ function bindConversationForm(screen) {
         bubble.classList.add("is-stopped");
         if (error.streamCompletion) {
           const remaining = Math.max(0, 8 - state.followUpCount);
-          screen.querySelector("#follow-up-count").textContent = remaining ? `还可以追问 ${remaining} 轮` : "本次牌局已完成 8 轮追问";
+          screen.querySelector("#follow-up-count").textContent = remaining ? `剩余 ${remaining} 轮追问` : "已完成 8 轮追问";
           if (error.streamCompletion.closed) {
             state.conversationClosed = true;
             form.classList.add("is-closed");
@@ -1402,11 +1441,18 @@ function bindConversationForm(screen) {
       } else {
         bubble.classList.add("is-error");
         const partialReply = outputText(answerText).trim();
-        const errorMessage = error instanceof TypeError ? connectionErrorMessage() : (error.message || "回应失败，请稍后再试。");
+        const errorMessage = (error instanceof TypeError ? "连接中断，还没有收到完整回应。" : (error.message || "回应失败，请稍后再试。"))
+          .replace(/[，,]\s*请(?:稍后)?(?:再试一次|重试|再试)[。.!！]?$/, "。");
         renderOutputText(answerText, `${partialReply}${partialReply ? "\n\n" : ""}${errorMessage}`);
         answerRecord.text = outputText(answerText);
         answerRecord.error = true;
-        status.textContent = "这轮没有计入次数，你可以修改后重新发送。";
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "retry-follow-up";
+        retry.dataset.retryFollowUp = "";
+        retry.innerHTML = `${uiIcon("restart")}<span>重试这次提问</span>`;
+        bubble.querySelector(".chat-message-body").append(retry);
+        status.textContent = "";
         input.value = message;
         selectedImages = images.map((dataUrl, index) => ({ name: `图片 ${index + 1}`, dataUrl }));
         renderImagePreview();
@@ -1432,7 +1478,7 @@ function renderConversation() {
     <header class="conversation-toolbar">
       <button class="conversation-back" id="back-to-reading" type="button">${uiIcon("back")}<span>牌面与解读</span></button>
       <span class="conversation-label">继续对话</span>
-      <div class="conversation-context-actions"><button class="conversation-context-button" id="open-reading-context" type="button" aria-label="展开牌面与解读">${uiIcon("cards")}</button>${questionToggle()}</div>
+      <div class="conversation-context-actions"><button class="conversation-context-button" id="open-reading-context" type="button" aria-label="展开牌面与解读" title="查看牌面与解读">${uiIcon("cards")}<span>牌面</span></button>${questionToggle()}</div>
     </header>
     <div class="conversation-messages" id="conversation-messages" aria-live="polite">${state.chatMessages.map(conversationBubble).join("")}</div>
     <form id="follow-up-form" class="conversation-compose ${state.conversationClosed ? "is-closed" : ""}">
@@ -1442,7 +1488,7 @@ function renderConversation() {
         <label class="sr-only" for="follow-up-input">继续追问</label>
         <textarea id="follow-up-input" maxlength="2000" rows="1" placeholder="${state.conversationClosed ? "这次对话已经结束" : "继续追问…"}" ${state.conversationClosed ? "disabled" : ""}></textarea>
       </div>
-      <div class="conversation-compose-actions"><small id="follow-up-count" class="conversation-round-count">${remaining ? `还可以追问 ${remaining} 轮` : "本次牌局已完成 8 轮追问"}</small><p id="follow-up-status" class="follow-up-status" role="status">${state.conversationClosed ? "这次对话已经结束。" : ""}</p><button id="end-conversation" class="end-conversation" type="button" ${state.conversationClosed ? "disabled" : ""}>结束对话</button><button id="stop-follow-up" class="stop-follow-up" type="button" hidden>${uiIcon("pause")}<span>暂停</span></button><button class="send-follow-up" type="submit" ${state.conversationClosed ? "disabled" : ""}>发送 ${uiIcon("arrow")}</button></div>
+      <div class="conversation-compose-actions"><small id="follow-up-count" class="conversation-round-count">${remaining ? `剩余 ${remaining} 轮追问` : "已完成 8 轮追问"}</small><p id="follow-up-status" class="follow-up-status" role="status">${state.conversationClosed ? "这次对话已经结束。" : ""}</p><button id="end-conversation" class="end-conversation" type="button" ${state.conversationClosed ? "disabled" : ""}>结束对话</button><button id="stop-follow-up" class="stop-follow-up" type="button" aria-label="暂停回应" hidden>${uiIcon("pause")}<span class="sr-only">暂停</span></button><button class="send-follow-up" type="submit" aria-label="发送追问" ${state.conversationClosed ? "disabled" : ""}><span class="sr-only">发送</span>${uiIcon("arrow")}</button></div>
     </form>
     ${readingDrawerHTML()}
   </section>`;

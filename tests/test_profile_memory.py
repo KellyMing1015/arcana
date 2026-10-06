@@ -22,6 +22,11 @@ MEMORY_ENV = {
 
 class ProfileMemoryTests(unittest.TestCase):
     def setUp(self):
+        configuration = patch.dict(os.environ, {
+            "LLM_BASE_URL": "https://relay.example/v1", "LLM_API_KEY": "test-key", "LLM_MODEL": "test-model",
+        })
+        configuration.start()
+        self.addCleanup(configuration.stop)
         website.CONVERSATIONS.clear()
         self.old_config = {k: website.app.config[k] for k in ("TESTING", "DATABASE", "SESSION_COOKIE_SECURE")}
         self.directory = tempfile.TemporaryDirectory()

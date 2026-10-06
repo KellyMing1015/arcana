@@ -14,6 +14,11 @@ import app as website
 
 class ReadingMemoryTests(unittest.TestCase):
     def setUp(self):
+        configuration = patch.dict(os.environ, {
+            "LLM_BASE_URL": "https://relay.example/v1", "LLM_API_KEY": "test-key", "LLM_MODEL": "test-model",
+        })
+        configuration.start()
+        self.addCleanup(configuration.stop)
         website.CONVERSATIONS.clear()
         # History-context tests must never launch a real configured notes model.
         for name in ("schedule_session", "schedule_failed"):
@@ -425,14 +430,11 @@ class ReadingMemoryTests(unittest.TestCase):
                     failed = self.client.post("/api/follow-up", json={
                         "conversationId": conversation_id, "message": "失败时不能写入历史的这句话",
                     }, buffered=True)
-                if failure in ("connection_error", "empty_response"):
-                    self.assertEqual(failed.status_code, 502, failed.get_data(as_text=True))
-                    self.assertIn("error", failed.json)
-                else:
-                    self.assertEqual(failed.status_code, 200)
-                    events = [json.loads(line[6:]) for line in failed.get_data(as_text=True).splitlines() if line.startswith("data: ")]
-                    self.assertTrue(events[-1].get("error"), events)
-                    self.assertFalse(any(event.get("done") for event in events), events)
+                # 上游连接也在后台打开，立即开始 SSE 后的失败统一用 error 事件报告。
+                self.assertEqual(failed.status_code, 200)
+                events = [json.loads(line[6:]) for line in failed.get_data(as_text=True).splitlines() if line.startswith("data: ")]
+                self.assertTrue(events[-1].get("error"), events)
+                self.assertFalse(any(event.get("done") for event in events), events)
                 scheduler.assert_not_called()
                 if upstream is not None:
                     self.assertTrue(upstream.closed)

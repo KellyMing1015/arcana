@@ -87,6 +87,7 @@ function setup({ reducedMotion = false } = {}) {
           async read() {
             const step = steps[index++];
             if (!step || cancelled) return { done: true };
+            if (step.error) throw step.error;
             if (step.afterFrame) await clock.waitFor(step.afterFrame);
             return cancelled ? { done: true } : { done: false, value: new TextEncoder().encode(step.text) };
           },
@@ -169,6 +170,20 @@ test("an early connection closure cannot be counted as a completed reply", async
   await assert.rejects(settle(context.streamToOutput(response([
     { text: eventFrame({ content: "不完整的回复" }) },
   ]), new Element("chat-reply-copy"))), /提前结束/);
+});
+
+test("a confirmed completion does not wait for a later broken network EOF", async () => {
+  const { context, response, settle } = setup();
+  const output = new Element("chat-reply-copy");
+  const text = "完整回应，已经由服务器确认。";
+  context.fetch = async () => response([
+    { text: eventFrame({ content: text }) + eventFrame({ done: true, rounds: 3, closed: false }) },
+    { error: new TypeError("network connection reset after done") },
+  ]);
+  const completion = await settle(context.fetchFollowUp("继续", [], output, new AbortController().signal, () => {}, "fixed-request-id"));
+  assert.equal(completion.rounds, 3);
+  assert.equal(context.outputText(output), text);
+  assert.equal(context.state.followUpCount, 3);
 });
 
 test("pausing a completed follow-up keeps the server round count and closing state", async () => {

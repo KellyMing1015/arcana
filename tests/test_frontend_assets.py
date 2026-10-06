@@ -9,7 +9,7 @@ import app as website
 class FrontendAssetsTests(unittest.TestCase):
     def test_page_modules_styles_and_local_images_are_served(self):
         client = website.app.test_client()
-        paths = {"/", "/app.js?v=20261006-images"}
+        paths = {"/", "/app.js?v=20261006-conversation"}
         visited = set()
         patterns = (
             r'''(?:href|src)=["']([^"']+)["']''',
@@ -32,13 +32,13 @@ class FrontendAssetsTests(unittest.TestCase):
                         if ref.startswith(("/assets/", "./")) and "${" not in ref:
                             paths.add(ref[1:] if ref.startswith("./") else ref)
             response.close()
-        for required in ("/home-view.js?v=20261006-images", "/flow.css?v=20261006-images",
+        for required in ("/home-view.js?v=20261006-conversation", "/flow.css?v=20261006-conversation",
                          "/assets/ui/observatory-moon.svg", "/assets/ui/card-back-engraved.webp?v=20261006-images&w=480",
                          "/assets/ui/starfield-night-sparse.webp?v=20261006-images"):
             self.assertIn(required, visited)
         # Different URLs instantiate separate modules and split account/profile state.
         modules = [path for path in visited if urlsplit(path).path.endswith(".js")]
-        self.assertTrue(all(urlsplit(path).query == "v=20261006-images" for path in modules), modules)
+        self.assertTrue(all(urlsplit(path).query == "v=20261006-conversation" for path in modules), modules)
         self.assertEqual(len(modules), len({urlsplit(path).path for path in modules}))
 
     def test_source_preview_and_private_data_are_not_public(self):
@@ -53,7 +53,7 @@ class FrontendAssetsTests(unittest.TestCase):
             page = response.get_data(as_text=True)
         styles = re.findall(r'href="(\./[^"\s]+\.css[^"\s]*)"', page)
         self.assertEqual(len(styles), 7)
-        self.assertTrue(all("?v=20261006-images" in href for href in styles))
-        self.assertIn('script.src = "./app.js?v=20261006-images"', page)
+        self.assertTrue(all("?v=20261006-conversation" in href for href in styles))
+        self.assertIn('script.src = "./app.js?v=20261006-conversation"', page)
         self.assertIn("127.0.0.1:4173", page)
         self.assertNotIn("127.0.0.1:4187", page)

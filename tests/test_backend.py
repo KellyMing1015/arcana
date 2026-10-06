@@ -18,6 +18,11 @@ import llm
 
 class ReadingTests(unittest.TestCase):
     def setUp(self):
+        configuration = patch.dict(os.environ, {
+            "LLM_BASE_URL": "https://relay.example/v1", "LLM_API_KEY": "test-key", "LLM_MODEL": "test-model",
+        })
+        configuration.start()
+        self.addCleanup(configuration.stop)
         website.CONVERSATIONS.clear()
         self.database_directory = tempfile.TemporaryDirectory()
         website.app.config.update(
@@ -789,7 +794,7 @@ class RelayTests(unittest.TestCase):
         body = json.loads(req.data)
         self.assertEqual(body["model"], "chosen-model")
         self.assertIs(body["stream"], True)
-        self.assertEqual(send.call_args.kwargs["timeout"], 60)
+        self.assertEqual(send.call_args.kwargs["timeout"], llm.CHAT_STREAM_TIMEOUT_SECONDS)
 
     def test_page_provider_overrides_environment_without_persisting_on_server(self):
         provider = {"baseUrl": "https://another-relay.example/v1", "apiKey": "browser-key", "model": "browser-model"}
