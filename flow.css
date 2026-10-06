@@ -286,6 +286,16 @@
 .conversation-compose-actions .end-conversation:hover:not(:disabled) { background: #ffffff04; color: #e7e7ed; }
 .conversation-round-count { grid-column: 1; grid-row: 3; margin: 0; padding-left: 10px; color: #b9b9c4; font-size: 12px; }
 .conversation-compose-actions .follow-up-status { grid-column: 1 / -1; grid-row: 4; margin: 0; padding: 0 10px 6px; max-width: none; color: #bdbdca; font-size: 13px; line-height: 1.6; }
+.conversation-compose-actions .conversation-reconnect { min-width: 0; min-height: 36px; padding: 0 6px; border: 0; background: transparent; color: #eeeeF3; text-decoration: underline; text-underline-offset: 3px; font-size: 13px; }
+.reading-confirm-backdrop { position: fixed; inset: 0; z-index: 2500; display: grid; place-items: center; padding: 20px; background: #0000009e; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.reading-confirm-dialog { width: min(100%, 360px); padding: 24px; border: 1px solid #d2d3df3b; border-radius: 22px; background: linear-gradient(145deg, #ffffff09, #ffffff02), #16181feb; color: #eeedf2; box-shadow: inset 0 1px 0 #ffffff0d, 0 18px 60px #0008; }
+.reading-confirm-dialog h2 { margin: 0 0 12px; font: 20px/1.4 var(--serif); }
+.reading-confirm-dialog p { margin: 0; color: #bdbdc8; font: 14px/1.7 var(--serif); }
+.reading-confirm-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+.reading-confirm-actions button { min-height: 44px; padding: 0 16px; border: 1px solid #d2d3df3b; border-radius: 22px; background: transparent; color: #eeeef3; font: 14px/1.5 var(--serif); }
+.reading-confirm-actions [data-reading-cancel] { background: #e0e0e7; border-color: #e0e0e7; color: #17181e; }
+.reading-confirm-actions [data-reading-confirm] { color: #bdbdc8; }
+.reading-confirm-actions button:active { transform: scale(.97); }
 .follow-up-image-preview { grid-column: 1 / -1; grid-row: 1; padding: 2px 5px 8px; margin: 0; }
 .follow-up-image-preview > span { background: #18181e; }
 .follow-up-image-preview img, .chat-attachments img { border-color: #d1d1db35; border-radius: 8px; }

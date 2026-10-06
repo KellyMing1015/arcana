@@ -532,9 +532,9 @@ class ReadingTests(unittest.TestCase):
         response = self.client.post("/api/conversation/end", json={"conversationId": conversation_id})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, {"ended": True})
-        self.assertNotIn(conversation_id, website.CONVERSATIONS)
+        self.assertTrue(website.CONVERSATIONS[conversation_id]["closed"])
         follow = self.client.post("/api/follow-up", json={"conversationId": conversation_id, "message": "还在吗"})
-        self.assertEqual(follow.status_code, 404)
+        self.assertEqual(follow.status_code, 409)
 
     def test_models_endpoint_returns_provider_list(self):
         provider = {"baseUrl": "https://relay.example/v1", "apiKey": "key"}

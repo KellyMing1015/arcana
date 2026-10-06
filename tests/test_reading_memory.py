@@ -486,7 +486,7 @@ class ReadingMemoryTests(unittest.TestCase):
         self.sign_in(1)
         response = self.client.post("/api/conversation/end", json={"conversationId": conversation_id})
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
-        self.assertNotIn(conversation_id, website.CONVERSATIONS)
+        self.assertTrue(website.CONVERSATIONS[conversation_id]["closed"])
 
     def test_anonymous_reading_can_be_ended_without_an_account(self):
         self.sign_in(None)
@@ -494,7 +494,7 @@ class ReadingMemoryTests(unittest.TestCase):
         response = self.client.post("/api/conversation/end", json={"conversationId": conversation_id})
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         self.assertEqual(response.json, {"ended": True})
-        self.assertNotIn(conversation_id, website.CONVERSATIONS)
+        self.assertTrue(website.CONVERSATIONS[conversation_id]["closed"])
 
     def test_all_deck_and_public_ui_images_are_present_and_support_browser_cache(self):
         cards = sorted((Path(website.ROOT) / "assets" / "cards").glob("*.webp"))

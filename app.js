@@ -1,7 +1,8 @@
-import { DECK, cardFace, cardImageURL, cardImageSrcSet, CARD_IMAGE_SIZES } from "./cards.js?v=20261006-conversation";
-import { getActiveProvider, getUserInfo, initializeProviderSettings } from "./settings.js?v=20261006-conversation";
-import { initializeAuth, isLoggedIn, saveCloudReading } from "./auth.js?v=20261006-conversation";
-import { renderHomeMarkup } from "./home-view.js?v=20261006-conversation";
+import { DECK, cardFace, cardImageURL, cardImageSrcSet, CARD_IMAGE_SIZES } from "./cards.js?v=20261006-session";
+import { getActiveProvider, getUserInfo, initializeProviderSettings } from "./settings.js?v=20261006-session";
+import { getCurrentUser, initializeAuth, isLoggedIn, saveCloudReading } from "./auth.js?v=20261006-session";
+import { renderHomeMarkup } from "./home-view.js?v=20261006-session";
+import { READING_SESSION_KEY, confirmReadingAction, loadReadingSnapshot, reconcileConversationMessages, saveReadingSnapshot } from "./reading-session.js?v=20261006-session";
 
 const app = document.querySelector("#app");
 const state = {
@@ -22,6 +23,12 @@ const state = {
   initialReading: "",
   chatMessages: [],
   conversationClosed: false,
+  readingKey: null,
+  followUpDraft: "",
+  followUpImages: [],
+  pendingFollowUp: null,
+  resumeMode: "ready",
+  attachmentWarning: false,
   userInfo: { enabled: false },
 };
 const labels = {
@@ -46,6 +53,12 @@ let fanOffset = 0;
 let fanMotionFrame = null;
 let activeReadingRequest = null;
 let activeConversationRequest = null;
+let activeResponseElement = null;
+let snapshotOwner = null;
+let authInitialized = false;
+let snapshotSaveTimer = null;
+let sessionSyncController = null;
+let sessionSyncTimer = null;
 const cardImageCache = new Map();
 const cardsById = new Map(DECK.map((card) => [card.id, card]));
 const CARD_IMAGE_RETRY_LIMIT = 2;
@@ -132,13 +145,183 @@ function positionLabels() {
   return state.spread === 3 && state.framework ? threeCardFrameworks[state.framework] : labels[state.spread];
 }
 
-function go(stage) {
+function go(stage, { historyMode = "push" } = {}) {
+  persistCurrentReading();
   clearTimers();
   state.stage = stage;
   if (stage === "question") cardImageCache.clear();
   document.body.classList.toggle("result-open", stage === "result");
   document.body.classList.toggle("conversation-open", stage === "conversation");
+  recordReadingNavigation(historyMode);
   render();
+  persistCurrentReading();
+}
+
+function readingOwner() { return getCurrentUser() ? `account:${getCurrentUser().id}` : "guest"; }
+
+function persistCurrentReading() {
+  if (!authInitialized || snapshotOwner !== readingOwner()) return;
+  const messages = state.chatMessages.map((message, index) => activeConversationRequest && activeResponseElement && index === state.chatMessages.length - 1
+    ? { ...message, text: outputText(activeResponseElement), stopped: true } : message);
+  try { saveReadingSnapshot(sessionStorage, { ...state, chatMessages: messages }, snapshotOwner); } catch { /* Storage can be disabled by the browser. */ }
+}
+
+function discardReadingSnapshot() { try { sessionStorage.removeItem(READING_SESSION_KEY); } catch { /* The visible reading can still reset. */ } }
+
+function queueReadingSnapshot() {
+  clearTimeout(snapshotSaveTimer);
+  snapshotSaveTimer = setTimeout(persistCurrentReading, 200);
+}
+
+function cancelSessionSync() {
+  clearTimeout(sessionSyncTimer);
+  sessionSyncTimer = null;
+  sessionSyncController?.abort();
+  sessionSyncController = null;
+}
+
+function recordReadingNavigation(mode) {
+  if (mode === "none") return;
+  const view = ["result", "conversation"].includes(state.stage) ? state.stage : "question";
+  const marker = { ...history.state, arcanaView: view, arcanaReading: state.readingKey };
+  if (history.state?.arcanaView === view && history.state?.arcanaReading === state.readingKey) return;
+  const method = mode === "replace" || view === "question" ? "replaceState" : "pushState";
+  history[method](marker, "", location.href);
+}
+
+function resetReadingState() {
+  cancelSessionSync();
+  clearTimeout(snapshotSaveTimer);
+  Object.assign(state, { question: "", selected: [], framework: null, conversationId: null, followUpCount: 0,
+    initialProvider: null, initialReading: "", chatMessages: [], conversationClosed: false,
+    readingKey: null, followUpDraft: "", followUpImages: [], pendingFollowUp: null,
+    resumeMode: "ready", attachmentWarning: false, userInfo: { enabled: false } });
+}
+
+async function stopCurrentResponse() {
+  const controller = activeConversationRequest || activeReadingRequest;
+  if (!controller) return;
+  controller.abort();
+  await controller.finished;
+}
+
+async function restartReading(trigger) {
+  const key = state.readingKey;
+  if (!await confirmReadingAction({ trigger, title: "要重新抽牌吗？",
+    description: "重新开始会结束当前牌局。",
+    confirmLabel: "重新抽牌" })) return;
+  await stopCurrentResponse();
+  if (state.readingKey !== key) return;
+  if (state.conversationId && !state.conversationClosed && state.resumeMode !== "expired") {
+    try {
+      const response = await fetch("/api/conversation/end", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ conversationId: state.conversationId }) });
+      if (!response.ok && response.status !== 404) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || "这次牌局暂时无法结束，请稍后重试。");
+      }
+    } catch (error) {
+      const notice = document.querySelector("#follow-up-status, .result-actions p");
+      if (notice) notice.textContent = error.message || "暂时无法连接，当前牌局已保留。";
+      return;
+    }
+  }
+  if (state.readingKey !== key) return;
+  discardReadingSnapshot();
+  resetReadingState();
+  go("question", { historyMode: "replace" });
+}
+
+async function returnToReading(trigger, fromHistory = false) {
+  if (activeConversationRequest) {
+    const confirmed = await confirmReadingAction({ trigger, title: "先回到解读页？",
+      description: "正在生成的回应会暂停，已有对话会保留。之后仍可以回来继续。", confirmLabel: "暂停并返回" });
+    if (!confirmed) { if (fromHistory) recordReadingNavigation("push"); return; }
+    await stopCurrentResponse();
+  }
+  if (!fromHistory && history.state?.arcanaView === "conversation" && history.state.arcanaReading === state.readingKey) {
+    history.back();
+  } else go("result", { historyMode: fromHistory ? "none" : "replace" });
+}
+
+function resumeNotice() {
+  if (state.resumeMode === "checking" || state.resumeMode === "busy") return "正在找回最新回应…";
+  if (state.resumeMode === "expired") return "这次牌局已过期，已有内容仍可查看。要继续请重新抽牌。";
+  if (state.resumeMode === "offline") return "暂时连不上服务器，对话已保留。";
+  return state.attachmentWarning ? "文字已恢复，未发送的图片请重新选择。" : "";
+}
+
+async function syncCurrentConversation() {
+  cancelSessionSync();
+  if (!state.conversationId || snapshotOwner !== readingOwner()) return;
+  const id = state.conversationId;
+  const key = state.readingKey;
+  const controller = new AbortController();
+  sessionSyncController = controller;
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  const current = () => sessionSyncController === controller && state.readingKey === key && snapshotOwner === readingOwner();
+  try {
+    const response = await fetch(`/api/conversation/${encodeURIComponent(id)}`, { signal: controller.signal, cache: "no-store" });
+    const payload = await response.json();
+    if (!current()) return;
+    if (response.status === 403 || response.status === 401) {
+      discardReadingSnapshot();
+      resetReadingState();
+      go("question", { historyMode: "replace" });
+      return;
+    }
+    if (response.status === 404) { state.resumeMode = "expired"; return; }
+    if (!response.ok || !Array.isArray(payload.messages) || !Number.isInteger(payload.rounds) || payload.rounds < 0 || payload.rounds > 8) throw new Error("对话状态暂时无法确认。");
+    const pending = state.pendingFollowUp;
+    state.chatMessages = reconcileConversationMessages(state.chatMessages, payload.messages, payload.rounds, pending);
+    state.followUpCount = payload.rounds;
+    state.conversationClosed = Boolean(payload.closed);
+    if (pending && payload.rounds > pending.roundsBefore) {
+      const user = state.chatMessages.at(-2);
+      if (state.followUpDraft === user?.message && JSON.stringify(state.followUpImages) === JSON.stringify(user.images || [])) {
+        state.followUpDraft = ""; state.followUpImages = []; state.attachmentWarning = false;
+      }
+      state.pendingFollowUp = null;
+    } else if (pending && !payload.busy && !payload.closed) {
+      const answer = state.chatMessages.at(-1);
+      if (answer?.role === "assistant") {
+        answer.error = true; delete answer.stopped;
+        answer.text ||= "上次的回应没有完成，可以重试这次提问。";
+      }
+    }
+    state.resumeMode = payload.busy ? "busy" : "ready";
+    if (payload.busy) sessionSyncTimer = setTimeout(syncCurrentConversation, 2000);
+  } catch {
+    if (current()) state.resumeMode = "offline";
+  } finally {
+    clearTimeout(timeout);
+    if (current()) {
+      sessionSyncController = null;
+      if (["result", "conversation"].includes(state.stage)) render();
+      persistCurrentReading();
+    }
+  }
+}
+
+function restoreCurrentReading() {
+  let saved;
+  try { saved = loadReadingSnapshot(sessionStorage, snapshotOwner, new Set(cardsById.keys())); } catch { return false; }
+  if (!saved) return false;
+  Object.assign(state, { question: saved.question, spread: saved.spread, selected: saved.cards.map((card) => ({ ...cardsById.get(card.id), reversed: card.reversed })),
+    framework: saved.framework, conversationId: saved.conversationId, followUpCount: saved.rounds, initialReading: saved.initialReading,
+    chatMessages: saved.messages, conversationClosed: saved.closed, readingKey: saved.readingKey,
+    followUpDraft: saved.draft.text, followUpImages: saved.draft.images, pendingFollowUp: saved.pending,
+    attachmentWarning: Boolean(saved.attachmentWarning), userInfo: getUserInfo(), resumeMode: saved.conversationId ? "checking" : "expired" });
+  // A fresh tab needs a safe reading entry below the conversation for the back gesture.
+  if (history.state?.arcanaReading !== state.readingKey) {
+    history.replaceState({ ...history.state, arcanaView: "question", arcanaReading: state.readingKey }, "", location.href);
+    if (saved.stage === "conversation") {
+      state.stage = "result";
+      recordReadingNavigation("push");
+    }
+  }
+  go(saved.stage, { historyMode: history.state?.arcanaView === saved.stage ? "none" : "push" });
+  syncCurrentConversation();
+  return true;
 }
 
 function backArt() {
@@ -325,6 +508,12 @@ function renderQuestion() {
     state.initialReading = "";
     state.chatMessages = [];
     state.conversationClosed = false;
+    state.readingKey = crypto.randomUUID();
+    state.followUpDraft = "";
+    state.followUpImages = [];
+    state.pendingFollowUp = null;
+    state.resumeMode = "ready";
+    state.attachmentWarning = false;
     state.userInfo = getUserInfo();
     go("shuffle");
   });
@@ -1206,6 +1395,7 @@ function conversationBubble(message) {
   const user = message.role === "user";
   const errorClass = message.error ? " is-error" : "";
   const stoppedClass = message.stopped ? " is-stopped" : "";
+  const retryAvailable = message.error && message === state.chatMessages.at(-1) && !state.conversationClosed && state.resumeMode === "ready";
   const attachments = Array.isArray(message.images)
     ? `<div class="chat-attachments">${message.images.map((image) => safeLocalImage(image)).filter(Boolean).map((image) => `<img src="${escapeHTML(image)}" alt="本轮上传的图片">`).join("")}</div>`
     : "";
@@ -1217,7 +1407,7 @@ function conversationBubble(message) {
     : replyParagraphs(message.text || "").map((paragraph) => `<div class="chat-bubble"><p class="chat-bubble-copy">${escapeHTML(paragraph)}</p></div>`).join("");
   const body = user
     ? `<div class="chat-message-body"><div class="chat-bubble">${attachments}${copy}</div></div>`
-    : `<div class="chat-message-body"><div class="chat-reply-copy" data-reply-text="${escapeHTML(message.text || "")}">${reply}</div>${message.error ? `<button class="retry-follow-up" data-retry-follow-up type="button">${uiIcon("restart")}<span>重试这次提问</span></button>` : ""}</div>`;
+    : `<div class="chat-message-body"><div class="chat-reply-copy" data-reply-text="${escapeHTML(message.text || "")}">${reply}</div>${retryAvailable ? `<button class="retry-follow-up" data-retry-follow-up type="button">${uiIcon("restart")}<span>重试这次提问</span></button>` : ""}</div>`;
   return `<article class="conversation-message ${user ? "conversation-user" : "conversation-reader"}${errorClass}${stoppedClass}">${body}</article>`;
 }
 
@@ -1304,28 +1494,41 @@ function bindConversationForm(screen) {
   const imagePreview = form.querySelector("#follow-up-image-preview");
   const status = screen.querySelector("#follow-up-status");
   const messages = screen.querySelector("#conversation-messages");
-  let selectedImages = [];
+  let selectedImages = state.followUpImages.map((dataUrl, index) => ({ name: `图片 ${index + 1}`, dataUrl }));
+  input.value = state.followUpDraft;
+  input.addEventListener("input", () => { state.followUpDraft = input.value; queueReadingSnapshot(); });
+  form.querySelector("[data-reconnect-conversation]")?.addEventListener("click", () => {
+    state.resumeMode = "checking"; render(); syncCurrentConversation();
+  });
 
   messages.addEventListener("click", (event) => {
     const retry = event.target.closest("[data-retry-follow-up]");
-    if (!retry || activeConversationRequest || state.conversationClosed) return;
+    if (!retry || activeConversationRequest || state.conversationClosed || state.resumeMode !== "ready") return;
     const failedAnswer = state.chatMessages.at(-1);
     const failedUser = state.chatMessages.at(-2);
     if (!failedAnswer?.error || failedUser?.role !== "user") return;
     input.value = failedUser.message ?? failedUser.text;
-    selectedImages = (failedUser.images || []).map((dataUrl, index) => ({ name: `图片 ${index + 1}`, dataUrl }));
+    if (failedUser.imagesOmitted && !selectedImages.length) {
+      status.textContent = "请重新选择这次提问的图片，再重试。";
+      imageInput.click();
+      return;
+    }
+    if (!failedUser.imagesOmitted) selectedImages = (failedUser.images || []).map((dataUrl, index) => ({ name: `图片 ${index + 1}`, dataUrl }));
     renderImagePreview();
     form.requestSubmit();
   });
 
   function renderImagePreview() {
+    state.followUpImages = selectedImages.map((image) => image.dataUrl);
     imagePreview.hidden = !selectedImages.length;
     imagePreview.innerHTML = selectedImages.map((image, index) => `<span><img src="${escapeHTML(image.dataUrl)}" alt="${escapeHTML(image.name)}"><button type="button" data-remove-image="${index}" aria-label="移除${escapeHTML(image.name)}">${uiIcon("close")}</button></span>`).join("");
     imagePreview.querySelectorAll("[data-remove-image]").forEach((remove) => remove.addEventListener("click", () => {
       selectedImages.splice(Number(remove.dataset.removeImage), 1);
       renderImagePreview();
     }));
+    queueReadingSnapshot();
   }
+  renderImagePreview();
 
   imageInput.addEventListener("change", async () => {
     const files = [...imageInput.files];
@@ -1352,22 +1555,28 @@ function bindConversationForm(screen) {
 
   stopButton.addEventListener("click", () => activeConversationRequest?.abort());
   endButton.addEventListener("click", async () => {
+    if (state.conversationClosed || activeConversationRequest || state.resumeMode !== "ready") return;
+    if (!await confirmReadingAction({ trigger: endButton, title: "结束这次对话？",
+      description: "结束后仍可查看。", confirmLabel: "结束对话" })) return;
+    const key = state.readingKey;
     input.disabled = true;
     button.disabled = true;
     endButton.disabled = true;
     imageInput.disabled = true;
     status.textContent = "正在结束这次对话…";
     try {
-      await fetch("/api/conversation/end", {
+      const response = await fetch("/api/conversation/end", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ conversationId: state.conversationId }),
       });
-    } catch {
-      // Even if the local service is gone, the visible conversation still closes.
-    } finally {
-      state.conversationId = null;
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || "暂时无法结束对话，请稍后重试。");
+      }
+      if (state.readingKey !== key) return;
       state.conversationClosed = true;
+      state.pendingFollowUp = null;
       const closing = { role: "assistant", text: "这次牌已经收好。剩下的答案，要交给你接下来的选择。" };
       state.chatMessages.push(closing);
       appendConversationMessage(messages, closing);
@@ -1375,14 +1584,20 @@ function bindConversationForm(screen) {
       input.placeholder = "这次对话已经结束";
       imageInput.disabled = true;
       status.textContent = "这次牌已经收好。想聊新的议题时，可以重新抽牌。";
+      persistCurrentReading();
+    } catch (error) {
+      if (state.readingKey !== key) return;
+      input.disabled = false; button.disabled = false; endButton.disabled = false; imageInput.disabled = false;
+      status.textContent = error.message || "暂时无法连接，当前对话已保留。";
     }
   });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const message = input.value.trim();
     const images = selectedImages.map((image) => image.dataUrl);
-    if ((!message && !images.length) || state.followUpCount >= 8 || state.conversationClosed || activeConversationRequest) { input.focus(); return; }
+    if ((!message && !images.length) || state.followUpCount >= 8 || state.conversationClosed || state.resumeMode !== "ready" || activeConversationRequest) { input.focus(); return; }
     input.value = "";
+    state.followUpDraft = "";
     selectedImages = [];
     renderImagePreview();
     input.disabled = true;
@@ -1398,14 +1613,19 @@ function bindConversationForm(screen) {
       ? failedUser.requestId : crypto.randomUUID();
     const userRecord = { role: "user", text: message || "发送了图片", message, images, requestId, requestSignature };
     const answerRecord = { role: "assistant", text: "" };
+    state.pendingFollowUp = { requestId, roundsBefore: state.followUpCount };
     state.chatMessages.push(userRecord, answerRecord);
     appendConversationMessage(messages, userRecord);
     const answerText = appendConversationMessage(messages, { role: "assistant", text: "", loading: true });
     const controller = new AbortController();
+    controller.finished = new Promise((resolve) => { controller.finish = resolve; });
     activeConversationRequest = controller;
+    activeResponseElement = answerText;
+    persistCurrentReading();
     try {
       const completion = await fetchFollowUp(message, images, answerText, controller.signal, () => { renderOutputText(answerText, ""); }, requestId);
       answerRecord.text = outputText(answerText);
+      state.pendingFollowUp = null;
       const remaining = Math.max(0, 8 - state.followUpCount);
       screen.querySelector("#follow-up-count").textContent = remaining ? `剩余 ${remaining} 轮追问` : "已完成 8 轮追问";
       if (completion.closed) {
@@ -1427,6 +1647,7 @@ function bindConversationForm(screen) {
         answerRecord.stopped = true;
         bubble.classList.add("is-stopped");
         if (error.streamCompletion) {
+          state.pendingFollowUp = null;
           const remaining = Math.max(0, 8 - state.followUpCount);
           screen.querySelector("#follow-up-count").textContent = remaining ? `剩余 ${remaining} 轮追问` : "已完成 8 轮追问";
           if (error.streamCompletion.closed) {
@@ -1454,11 +1675,13 @@ function bindConversationForm(screen) {
         bubble.querySelector(".chat-message-body").append(retry);
         status.textContent = "";
         input.value = message;
+        state.followUpDraft = message;
         selectedImages = images.map((dataUrl, index) => ({ name: `图片 ${index + 1}`, dataUrl }));
         renderImagePreview();
       }
     } finally {
       if (activeConversationRequest === controller) activeConversationRequest = null;
+      if (activeResponseElement === answerText) activeResponseElement = null;
       stopButton.hidden = true;
       button.hidden = false;
       if (!state.conversationClosed && state.followUpCount < 8) {
@@ -1468,12 +1691,16 @@ function bindConversationForm(screen) {
         imageInput.disabled = false;
         input.focus();
       }
+      persistCurrentReading();
+      controller.finish();
     }
   });
 }
 
 function renderConversation() {
   const remaining = Math.max(0, 8 - state.followUpCount);
+  const locked = state.conversationClosed || state.resumeMode !== "ready";
+  const notice = resumeNotice() || (state.conversationClosed ? "这次对话已经结束，已有内容仍可查看。" : "");
   app.innerHTML = `<section class="conversation-screen eclipse-conversation screen-enter">
     <header class="conversation-toolbar">
       <button class="conversation-back" id="back-to-reading" type="button">${uiIcon("back")}<span>牌面与解读</span></button>
@@ -1484,18 +1711,18 @@ function renderConversation() {
     <form id="follow-up-form" class="conversation-compose ${state.conversationClosed ? "is-closed" : ""}">
       <div id="follow-up-image-preview" class="follow-up-image-preview" hidden></div>
       <div class="conversation-input-row">
-        <label class="image-upload-button" aria-label="上传本地图片" title="上传图片"><input id="follow-up-images" type="file" accept="image/jpeg,image/png,image/webp" multiple ${state.conversationClosed ? "disabled" : ""}>${uiIcon("image")}</label>
+        <label class="image-upload-button" aria-label="上传本地图片" title="上传图片"><input id="follow-up-images" type="file" accept="image/jpeg,image/png,image/webp" multiple ${locked ? "disabled" : ""}>${uiIcon("image")}</label>
         <label class="sr-only" for="follow-up-input">继续追问</label>
-        <textarea id="follow-up-input" maxlength="2000" rows="1" placeholder="${state.conversationClosed ? "这次对话已经结束" : "继续追问…"}" ${state.conversationClosed ? "disabled" : ""}></textarea>
+        <textarea id="follow-up-input" maxlength="2000" rows="1" placeholder="${state.conversationClosed ? "这次对话已经结束" : state.resumeMode === "expired" ? "已有对话仍可查看" : "继续追问…"}" ${locked ? "disabled" : ""}></textarea>
       </div>
-      <div class="conversation-compose-actions"><small id="follow-up-count" class="conversation-round-count">${remaining ? `剩余 ${remaining} 轮追问` : "已完成 8 轮追问"}</small><p id="follow-up-status" class="follow-up-status" role="status">${state.conversationClosed ? "这次对话已经结束。" : ""}</p><button id="end-conversation" class="end-conversation" type="button" ${state.conversationClosed ? "disabled" : ""}>结束对话</button><button id="stop-follow-up" class="stop-follow-up" type="button" aria-label="暂停回应" hidden>${uiIcon("pause")}<span class="sr-only">暂停</span></button><button class="send-follow-up" type="submit" aria-label="发送追问" ${state.conversationClosed ? "disabled" : ""}><span class="sr-only">发送</span>${uiIcon("arrow")}</button></div>
+      <div class="conversation-compose-actions"><small id="follow-up-count" class="conversation-round-count">${remaining ? `剩余 ${remaining} 轮追问` : "已完成 8 轮追问"}</small><p id="follow-up-status" class="follow-up-status" role="status">${escapeHTML(notice)}${state.resumeMode === "offline" ? ' <button type="button" class="conversation-reconnect" data-reconnect-conversation>重新连接</button>' : ""}</p><button id="end-conversation" class="end-conversation" type="button" ${locked ? "disabled" : ""}>结束对话</button><button id="stop-follow-up" class="stop-follow-up" type="button" aria-label="暂停回应" hidden>${uiIcon("pause")}<span class="sr-only">暂停</span></button><button class="send-follow-up" type="submit" aria-label="发送追问" ${locked ? "disabled" : ""}><span class="sr-only">发送</span>${uiIcon("arrow")}</button></div>
     </form>
     ${readingDrawerHTML()}
   </section>`;
   const screen = document.querySelector(".conversation-screen");
   const messages = screen.querySelector("#conversation-messages");
   messages.scrollTop = messages.scrollHeight;
-  screen.querySelector("#back-to-reading").addEventListener("click", () => go("result"));
+  screen.querySelector("#back-to-reading").addEventListener("click", (event) => returnToReading(event.currentTarget));
   const drawer = screen.querySelector("#reading-drawer");
   const openDrawer = screen.querySelector("#open-reading-context");
   const closeDrawer = screen.querySelector("#close-reading-drawer");
@@ -1528,17 +1755,7 @@ function renderResult() {
     <div class="result-actions"><button class="ritual-primary" id="interpret" type="button">开始解读</button><p></p></div>
     </section></div>
   </section>`;
-  document.querySelector("#start-over").addEventListener("click", () => {
-    state.question = "";
-    state.conversationId = null;
-    state.followUpCount = 0;
-    state.initialProvider = null;
-    state.initialReading = "";
-    state.chatMessages = [];
-    state.conversationClosed = false;
-    state.userInfo = { enabled: false };
-    go("question");
-  });
+  document.querySelector("#start-over").addEventListener("click", (event) => restartReading(event.currentTarget));
   const button = document.querySelector("#interpret");
   const actions = document.querySelector(".result-actions");
   if (state.initialReading) {
@@ -1546,17 +1763,12 @@ function renderResult() {
     const output = createReadingOutput(actions);
     output.textContent = state.initialReading;
     output.scrollTop = 0;
-    button.textContent = state.conversationClosed ? "重新开始" : "继续对话";
-    button.dataset.action = state.conversationClosed ? "restart" : "conversation";
+    button.textContent = state.conversationClosed || state.resumeMode === "expired" ? "查看对话" : state.chatMessages.length ? "回到对话" : "继续对话";
+    button.dataset.action = "conversation";
   }
   button.addEventListener("click", async () => {
     if (button.dataset.action === "conversation") {
       go("conversation");
-      return;
-    }
-    if (button.dataset.action === "restart") {
-      state.question = "";
-      go("question");
       return;
     }
     if (state.spread === 3) {
@@ -1572,6 +1784,7 @@ function renderResult() {
     const revealReading = () => screen.classList.add("has-reading");
     output.textContent = "";
     const controller = new AbortController();
+    controller.finished = new Promise((resolve) => { controller.finish = resolve; });
     activeReadingRequest = controller;
     try {
       state.conversationId = null;
@@ -1583,6 +1796,7 @@ function renderResult() {
       const completedReading = await fetchReading(output, revealReading, controller.signal);
       const { reading, summary } = splitReadingSummary(completedReading);
       state.initialReading = reading || completedReading.trim();
+      persistCurrentReading();
       output.textContent = state.initialReading;
       const note = actions.querySelector("p");
       if (isLoggedIn() && state.userInfo?.enabled && state.userInfo?.id) {
@@ -1612,6 +1826,7 @@ function renderResult() {
     } finally {
       if (activeReadingRequest === controller) activeReadingRequest = null;
       if (document.body.contains(button)) button.disabled = false;
+      controller.finish();
     }
   });
 }
@@ -1627,5 +1842,48 @@ function render() {
 }
 
 initializeProviderSettings(() => {});
-initializeAuth(() => {});
+initializeAuth(async () => {
+  const owner = readingOwner();
+  if (!authInitialized) {
+    authInitialized = true; snapshotOwner = owner;
+    if (!state.initialReading && state.stage === "question") restoreCurrentReading();
+    else persistCurrentReading();
+    return;
+  }
+  if (snapshotOwner === owner) return;
+  cancelSessionSync();
+  await stopCurrentResponse();
+  resetReadingState(); snapshotOwner = owner;
+  go("question", { historyMode: "replace" });
+  restoreCurrentReading();
+});
+if (!history.state?.arcanaView) history.replaceState({ ...history.state, arcanaView: "question", arcanaReading: null }, "", location.href);
+window.addEventListener("pagehide", persistCurrentReading);
+document.addEventListener("visibilitychange", () => { if (document.hidden) persistCurrentReading(); });
+window.addEventListener("beforeunload", (event) => {
+  persistCurrentReading();
+  if (activeReadingRequest || activeConversationRequest) { event.preventDefault(); event.returnValue = ""; }
+});
+window.addEventListener("pageshow", async (event) => {
+  if (event.persisted && state.initialReading) {
+    await stopCurrentResponse();
+    state.resumeMode = "checking"; render(); syncCurrentConversation();
+  }
+});
+window.addEventListener("popstate", async (event) => {
+  if (location.hash || document.querySelector("#provider-settings, #account-overlay")) return;
+  const view = event.state?.arcanaView;
+  if (event.state?.arcanaReading === state.readingKey && state.selected.length) {
+    if (view === state.stage) { recordReadingNavigation("replace"); return; }
+    if (view === "result") { await returnToReading(document.querySelector("#back-to-reading"), true); return; }
+    if (view === "conversation" && state.initialReading) { go("conversation", { historyMode: "none" }); return; }
+    if (view === "question" && (state.initialReading || activeReadingRequest)) {
+      recordReadingNavigation("push");
+      await restartReading(document.querySelector("#start-over"));
+      return;
+    }
+  }
+  // Discarded readings must never be reconstructed from an old browser-history marker.
+  recordReadingNavigation("replace");
+});
 render();

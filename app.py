@@ -109,6 +109,7 @@ CONVERSATIONS = {}
 CONVERSATION_LOCK = Lock()
 PUBLIC_FILES = {
     "index.html", "app.js", "auth.js", "cards.js", "settings.js", "home-view.js",
+    "reading-session.js",
     "styles.css", "theme.css", "personal.css", "ritual.css", "eclipse.css", "flow.css", "atmosphere.css",
 }
 UI_FILES = {
@@ -281,7 +282,10 @@ def login_required(view):
             return Response(status=204)
         user = current_user()
         if user is None:
+            browser_id = flask_session.get("conversation_browser_id")
             flask_session.clear()
+            if isinstance(browser_id, str) and re.fullmatch(r"[0-9a-f]{64}", browser_id):
+                flask_session["conversation_browser_id"] = browser_id
             return jsonify(error="请先登录后再使用这项功能。"), 401
         return view(user, *args, **kwargs)
     return wrapped
@@ -1238,11 +1242,17 @@ def normalize_follow_up_images(value):
 
 def cleanup_conversations(now=None):
     now = now or time.time()
-    expired = [key for key, item in CONVERSATIONS.items() if now - item["updated_at"] > CONVERSATION_TTL]
+    expired = [
+        key for key, item in CONVERSATIONS.items()
+        if not item.get("busy") and now - item["updated_at"] > CONVERSATION_TTL
+    ]
     for key in expired:
         CONVERSATIONS.pop(key, None)
     if len(CONVERSATIONS) > MAX_CONVERSATIONS:
-        oldest = sorted(CONVERSATIONS, key=lambda key: CONVERSATIONS[key]["updated_at"])
+        oldest = sorted(
+            (key for key in CONVERSATIONS if not CONVERSATIONS[key].get("busy")),
+            key=lambda key: CONVERSATIONS[key]["updated_at"],
+        )
         for key in oldest[:len(CONVERSATIONS) - MAX_CONVERSATIONS]:
             CONVERSATIONS.pop(key, None)
 
@@ -1253,6 +1263,68 @@ def reset_conversation_busy(conversation_id):
         if session:
             session["busy"] = False
             session["updated_at"] = time.time()
+
+
+def owns_conversation(conversation):
+    owner_id = conversation.get("memory_user_id")
+    if owner_id is not None:
+        return flask_session.get("user_id") == owner_id
+    browser_id = conversation.get("owner_browser_id")
+    # Older in-process sessions and test fixtures rely on the unguessable ID.
+    # New guest sessions always have a browser binding created before streaming.
+    return browser_id is None or flask_session.get("conversation_browser_id") == browser_id
+
+
+def conversation_visible_messages(conversation):
+    """Return only completed follow-ups, never prompts or the initial card command."""
+    visible = conversation.get("visible_messages")
+    if visible is None:
+        visible = []
+        initial_user_seen = False
+        initial_answer_seen = False
+        for item in conversation.get("messages", []):
+            role = item.get("role")
+            if role == "system":
+                continue
+            if not initial_user_seen and role == "user":
+                initial_user_seen = True
+                continue
+            if initial_user_seen and not initial_answer_seen and role == "assistant":
+                initial_answer_seen = True
+                continue
+            if not initial_answer_seen or role not in {"user", "assistant"}:
+                continue
+            content = item.get("content", "")
+            images = []
+            if isinstance(content, list):
+                text = "\n".join(
+                    part.get("text", "") for part in content
+                    if isinstance(part, dict) and part.get("type") == "text"
+                )
+                images = [
+                    part["image_url"]["url"] for part in content
+                    if isinstance(part, dict) and part.get("type") == "image_url"
+                    and isinstance(part.get("image_url"), dict)
+                    and isinstance(part["image_url"].get("url"), str)
+                    and part["image_url"]["url"].startswith("data:image/")
+                ]
+            else:
+                text = content if isinstance(content, str) else ""
+            visible.append({"role": role, "text": text, **({"images": images} if images else {})})
+    result = []
+    for item in visible:
+        role = item.get("role")
+        if role not in {"user", "assistant"}:
+            continue
+        text = item.get("text", "")
+        if not isinstance(text, str):
+            continue
+        if role == "assistant":
+            text = without_summary(text)
+        result.append({"role": role, "text": text})
+        if role == "user" and item.get("images"):
+            result[-1]["images"] = list(item["images"])
+    return result
 
 
 def sse(payload):
@@ -1462,6 +1534,12 @@ def reading():
         if type(record_history) is not bool:
             raise LLMError("历史记录选项格式不正确。", 400)
         account_user = current_user()
+        owner_browser_id = None
+        if account_user is None:
+            owner_browser_id = flask_session.get("conversation_browser_id")
+            if not isinstance(owner_browser_id, str):
+                owner_browser_id = secrets.token_hex(32)
+                flask_session["conversation_browser_id"] = owner_browser_id
         has_background = bool(user_info and any(value for key, value in user_info.items() if key != "id"))
         record_history = record_history and account_user is not None and has_background
         messages = build_messages(question, spread, cards, user_info, include_summary=record_history)
@@ -1519,10 +1597,13 @@ def reading():
                     )
                     CONVERSATIONS[conversation_id] = {
                         "messages": [*messages, {"role": "assistant", "content": "".join(answer)}],
+                        "visible_messages": [],
                         "rounds": 0,
+                        "closed": False,
                         "busy": False,
                         "updated_at": time.time(),
-                        "memory_user_id": account_user["id"] if memory or notes_enabled else None,
+                        "memory_user_id": account_user["id"] if account_user is not None else None,
+                        "owner_browser_id": owner_browser_id,
                         "notes_enabled": session_notes_enabled,
                         "notes_user_id": account_user["id"] if notes_enabled else None,
                         "notes_profile_id": profile_id,
@@ -1606,8 +1687,7 @@ def follow_up():
             session = CONVERSATIONS.get(conversation_id)
             if not session:
                 raise LLMError("这次牌局已经失效，请重新抽牌。", 404)
-            memory_user_id = session.get("memory_user_id")
-            if memory_user_id is not None and flask_session.get("user_id") != memory_user_id:
+            if not owns_conversation(session):
                 raise LLMError("请登录创建这次牌局的账号，或重新抽牌。", 403)
             if session["busy"]:
                 raise LLMError("塔罗师正在回答上一条追问，请稍等。", 409)
@@ -1624,11 +1704,14 @@ def follow_up():
                 )
                 return Response(
                     sse({"content": replay["answer"]}) + sse({
-                        "done": True, "rounds": replay["rounds"], "closed": replay["closed"],
+                        "done": True, "rounds": replay["rounds"],
+                        "closed": replay["closed"] or bool(session.get("closed")),
                     }),
                     content_type="text/event-stream; charset=utf-8",
                     headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
                 )
+            if session.get("closed"):
+                raise LLMError("这次对话已结束，仍可查看记录；想继续解读请重新抽牌。", 409)
             if session["rounds"] >= MAX_FOLLOW_UPS:
                 raise LLMError("这次牌局已经完成八轮追问，请重新抽牌。", 409)
             if "userInfo" in payload and session.get("notes_enabled") and (
@@ -1694,11 +1777,18 @@ def follow_up():
                 if not session:
                     session_missing = True
                 else:
+                    visible_messages = conversation_visible_messages(session)
+                    visible_messages.extend([
+                        {"role": "user", "text": message, **({"images": list(images)} if images else {})},
+                        {"role": "assistant", "text": response_text},
+                    ])
+                    session["visible_messages"] = visible_messages
                     session["messages"].extend([
                         {"role": "user", "content": user_content},
                         {"role": "assistant", "content": response_text},
                     ])
                     session["rounds"] = next_round
+                    session["closed"] = next_round >= MAX_FOLLOW_UPS
                     session["busy"] = False
                     session["updated_at"] = time.time()
                     if session.get("notes_enabled"):
@@ -1741,6 +1831,38 @@ def follow_up():
     })
 
 
+@app.route("/api/conversation/<conversation_id>", methods=["GET", "OPTIONS"])
+def get_conversation(conversation_id):
+    if not allowed_origin():
+        return jsonify(error="此页面来源不允许查看对话。"), 403
+    if request.method == "OPTIONS":
+        return Response(status=204)
+    if not re.fullmatch(r"[0-9a-f]{32}", conversation_id):
+        return jsonify(error="对话编号无效。"), 400
+    with CONVERSATION_LOCK:
+        cleanup_conversations()
+        conversation = CONVERSATIONS.get(conversation_id)
+        if not conversation:
+            return jsonify(
+                error="这次对话已过期或服务器已重启，已保存的文字仍可查看，但无法继续追问。",
+                code="conversation_expired",
+            ), 404
+        if not owns_conversation(conversation):
+            return jsonify(
+                error="请登录创建这次牌局的账号，或重新抽牌。",
+                code="conversation_owner_mismatch",
+            ), 403
+        response = jsonify(
+            conversationId=conversation_id,
+            rounds=conversation["rounds"],
+            closed=bool(conversation.get("closed")) or conversation["rounds"] >= MAX_FOLLOW_UPS,
+            busy=bool(conversation.get("busy")),
+            messages=conversation_visible_messages(conversation),
+        )
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.route("/api/conversation/end", methods=["POST", "OPTIONS"])
 def end_conversation():
     if not allowed_origin():
@@ -1751,12 +1873,22 @@ def end_conversation():
     conversation_id = payload.get("conversationId") if isinstance(payload, dict) else None
     if not isinstance(conversation_id, str) or not re.fullmatch(r"[0-9a-f]{32}", conversation_id):
         return jsonify(error="对话编号无效。"), 400
+    ended_conversation = None
     with CONVERSATION_LOCK:
+        cleanup_conversations()
         conversation = CONVERSATIONS.get(conversation_id)
-        owner_id = conversation.get("memory_user_id") if conversation else None
-        if owner_id is not None and flask_session.get("user_id") != owner_id:
+        if conversation and not owns_conversation(conversation):
             return jsonify(error="请登录创建这次牌局的账号，或重新抽牌。"), 403
-        CONVERSATIONS.pop(conversation_id, None)
+        if conversation:
+            if conversation.get("busy"):
+                return jsonify(error="塔罗师正在回答，请等待回应完成后结束对话。"), 409
+            newly_closed = not conversation.get("closed")
+            conversation["closed"] = True
+            conversation["updated_at"] = time.time()
+            if newly_closed:
+                ended_conversation = dict(conversation)
+    if ended_conversation is not None:
+        schedule_profile_conversation(conversation_id, ended_conversation)
     return jsonify(ended=True)
 
 
