@@ -10,7 +10,7 @@ import tempfile
 import threading
 import unittest
 from unittest.mock import patch
-_bootstrap = tempfile.TemporaryDirectory(prefix="arcana-profile-test-bootstrap-", dir="/private/tmp")
+_bootstrap = tempfile.TemporaryDirectory(prefix="arcana-profile-test-bootstrap-")
 with patch.dict(os.environ, {"ARCANA_DATABASE": os.path.join(_bootstrap.name, "arcana.db")}), \
         patch("dotenv.load_dotenv", return_value=False):
     import app as website

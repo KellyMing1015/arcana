@@ -17,7 +17,7 @@ import profile_memory as memory
 
 class StructuredNoteTests(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory(prefix="arcana-structured-notes-", dir="/private/tmp")
+        self.directory = tempfile.TemporaryDirectory(prefix="arcana-structured-notes-")
         self.path = os.path.join(self.directory.name, "notes.db")
         self.connection = sqlite3.connect(self.path)
         self.connection.row_factory = sqlite3.Row
