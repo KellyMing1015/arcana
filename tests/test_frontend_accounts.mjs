@@ -143,7 +143,7 @@ function notesPanel() {
       this.rows = [...value.matchAll(/data-note-id="([^"]+)"/g)].map((match) => {
         const row = new Control();
         row.dataset = { noteId: match[1] };
-        row.controls = Object.fromEntries(["[data-note-edit]", "[data-note-delete]", "textarea", ".profile-note-topic-editor input", "[data-note-count]", "[data-note-cancel]", "[data-note-save]"].map((name) => [name, new Control()]));
+        row.controls = Object.fromEntries(["[data-note-edit]", "[data-note-details]", "[data-note-delete]", "textarea", ".profile-note-topic-editor input", "[data-note-count]", "[data-note-cancel]", "[data-note-save]"].map((name) => [name, new Control()]));
         row.querySelector = (selector) => row.controls[selector];
         return row;
       });
@@ -179,7 +179,7 @@ test("便签编辑请求带正式账号凭证及档案ID，保存后重新读取
   assert.equal(calls[0].credentials, "same-origin");
   const update = calls.find((call) => call.method === "PATCH");
   assert.equal(update.url, "/api/profile-notes/7");
-  assert.deepEqual(JSON.parse(update.body), { profile_id: "person", topic: "近况", text: "手动修改后继续保留" });
+  assert.deepEqual(JSON.parse(update.body), { profile_id: "person", topic: "近况", headline: "手动修改后继续保留" });
   assert.equal(calls.at(-1).method, "GET");
   assert.match(list.innerHTML, /手动修改后继续保留/);
   assert.equal(feedback.textContent, "便签已更新。");

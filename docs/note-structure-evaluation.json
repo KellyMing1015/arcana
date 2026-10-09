@@ -1,0 +1,349 @@
+{
+  "scope": "Only fictional data in temporary SQLite. Existing local primary LLM configuration was read only for the evaluation; no real user notes or production database were read, and no configuration was changed. The production dedicated memory model was not tested.",
+  "model_calls": 9,
+  "scenarios": [
+    {
+      "scenario": "legacy_summary",
+      "model_calls": 1,
+      "before_length": 123,
+      "after_length": 81,
+      "state": {
+        "status": "done",
+        "extraction_outcome": "changed"
+      },
+      "notes": [
+        {
+          "id": "1",
+          "topic": "转行",
+          "headline": "你在直播带货，同时在准备转行做 AI 产品；还没离职，计划10月15日前投出第一份简历。",
+          "details": [
+            "作品集还在整理，暂时还没投简历。",
+            "你在瞒着同事准备。",
+            "你说求职要赶紧了。"
+          ],
+          "importance": 3,
+          "last_evidence_at": "2026-10-06",
+          "user_edited": false,
+          "structure_version": 1
+        }
+      ]
+    },
+    {
+      "scenario": "repeat_confirmation",
+      "model_calls": 1,
+      "before_length": 81,
+      "after_length": 71,
+      "state": {
+        "status": "done",
+        "extraction_outcome": "changed"
+      },
+      "notes": [
+        {
+          "id": "1",
+          "topic": "转行",
+          "headline": "你在直播带货，同时在准备转行做 AI 产品；还没离职，计划10月15日前投出第一份简历。",
+          "details": [
+            "作品集还在整理，暂时还没投简历。",
+            "你在瞒着同事准备。"
+          ],
+          "importance": 3,
+          "last_evidence_at": "2026-10-07",
+          "user_edited": false,
+          "structure_version": 1
+        }
+      ]
+    },
+    {
+      "scenario": "new_progress",
+      "model_calls": 1,
+      "before_length": 71,
+      "after_length": 77,
+      "state": {
+        "status": "done",
+        "extraction_outcome": "changed"
+      },
+      "notes": [
+        {
+          "id": "1",
+          "topic": "转行",
+          "headline": "你在直播带货，同时在准备转行做 AI 产品；已投出第一份简历，还没离职。",
+          "details": [
+            "作品集已整理好，第一份简历已发出，不再处于\"还没投\"的状态。",
+            "你在瞒着同事准备。"
+          ],
+          "importance": 3,
+          "last_evidence_at": "2026-10-08",
+          "user_edited": false,
+          "structure_version": 1
+        }
+      ]
+    },
+    {
+      "scenario": "edited_fact_preserved",
+      "model_calls": 1,
+      "before_length": 97,
+      "after_length": 97,
+      "state": {
+        "status": "failed",
+        "extraction_outcome": "model_error"
+      },
+      "notes": [
+        {
+          "id": "1",
+          "topic": "转行",
+          "headline": "你从直播带货转向AI产品运营。目标岗位是AI产品运营，不是AI产品经理。你已发出第一份简历，作品集整理好了。你尚未离职，在瞒着同事准备。你目前就是要转行找AI产品运营岗位，不是AI产品经理岗位。",
+          "details": [],
+          "importance": 3,
+          "last_evidence_at": "2026-10-08",
+          "user_edited": true,
+          "structure_version": 1
+        }
+      ]
+    },
+    {
+      "scenario": "edited_fact_retry_with_final_prompt",
+      "model_calls": 2,
+      "before_length": 97,
+      "after_length": 93,
+      "state": {
+        "status": "done",
+        "extraction_outcome": "changed"
+      },
+      "notes": [
+        {
+          "id": "1",
+          "topic": "转行",
+          "headline": "你从直播带货转向 AI 产品运营，已投出第一份简历并在等回复，暂时不申请产品经理岗位。",
+          "details": [
+            "目标岗位是 AI 产品运营，不是 AI 产品经理。",
+            "你尚未离职，在瞒着同事准备。",
+            "作品集已整理好。"
+          ],
+          "importance": 3,
+          "last_evidence_at": "2026-10-10",
+          "user_edited": true,
+          "structure_version": 1
+        }
+      ]
+    },
+    {
+      "scenario": "final_legacy_summary",
+      "final_prompt": true,
+      "model_calls": 1,
+      "before_length": 123,
+      "after_length": 71,
+      "state": {
+        "status": "done",
+        "extraction_outcome": "changed"
+      },
+      "notes": [
+        {
+          "id": "2",
+          "topic": "转行",
+          "headline": "你在从直播带货转向 AI 产品，还没离职、还没投出简历，计划10月15日前投出第一份简历。",
+          "details": [
+            "作品集正在整理中。",
+            "离职的事瞒着同事，在悄悄准备。"
+          ],
+          "importance": 3,
+          "last_evidence_at": "2026-10-06",
+          "user_edited": false,
+          "structure_version": 1
+        }
+      ]
+    },
+    {
+      "scenario": "final_edited_fact_preserved",
+      "final_prompt": true,
+      "model_calls": 2,
+      "before_length": 97,
+      "after_length": 84,
+      "state": {
+        "status": "done",
+        "extraction_outcome": "changed"
+      },
+      "notes": [
+        {
+          "id": "3",
+          "topic": "转行",
+          "headline": "你在从直播带货转向 AI 产品运营，已投出第一份简历、正在等回复。",
+          "details": [
+            "目标岗位是 AI 产品运营，不是 AI 产品经理。",
+            "你还没离职，在瞒着同事准备。",
+            "作品集已经整理好。"
+          ],
+          "importance": 3,
+          "last_evidence_at": "2026-10-10",
+          "user_edited": true,
+          "structure_version": 1
+        }
+      ]
+    }
+  ],
+  "calls": [
+    {
+      "call": 1,
+      "kind": "extract",
+      "result": {
+        "changed": true,
+        "notes": [
+          {
+            "id": "1",
+            "topic": "转行",
+            "headline": "你在直播带货，同时在准备转行做 AI 产品；还没离职，计划10月15日前投出第一份简历。",
+            "details": [
+              "作品集还在整理，暂时还没投简历。",
+              "你在瞒着同事准备。",
+              "你说求职要赶紧了。"
+            ],
+            "importance": 3,
+            "last_evidence_at": "2026-10-06",
+            "evidence": [
+              "我还没离职，也还没投简历，正在整理作品集，计划10月15日前投第一份简历。"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "call": 2,
+      "kind": "extract",
+      "result": {
+        "changed": true,
+        "notes": [
+          {
+            "id": "1",
+            "topic": "转行",
+            "headline": "你在直播带货，同时在准备转行做 AI 产品；还没离职，计划10月15日前投出第一份简历。",
+            "details": [
+              "作品集还在整理，暂时还没投简历。",
+              "你在瞒着同事准备。"
+            ],
+            "importance": 3,
+            "last_evidence_at": "2026-10-07",
+            "evidence": [
+              "我还是在从直播带货转向AI产品，还没离职，在瞒着同事准备，作品集还没整理好。仍计划10月15日前投第一份简历。"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "call": 3,
+      "kind": "extract",
+      "result": {
+        "changed": true,
+        "notes": [
+          {
+            "id": "1",
+            "topic": "转行",
+            "headline": "你在直播带货，同时在准备转行做 AI 产品；已投出第一份简历，还没离职。",
+            "details": [
+              "作品集已整理好，第一份简历已发出，不再处于\"还没投\"的状态。",
+              "你在瞒着同事准备。"
+            ],
+            "importance": 3,
+            "last_evidence_at": "2026-10-08",
+            "evidence": [
+              "我今天已经发出第一份简历，作品集也整理好了，所以不再是还没投简历。我还没有离职。"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "call": 5,
+      "kind": "extract",
+      "result": {
+        "changed": true,
+        "notes": [
+          {
+            "id": "1",
+            "topic": "转行",
+            "headline": "你从直播带货转向 AI 产品运营，已投出第一份简历并在等回复，暂时不申请产品经理岗位。",
+            "details": [
+              "目标岗位是 AI 产品运营，不是 AI 产品经理。",
+              "你尚未离职，在瞒着同事准备。",
+              "作品集已整理好。"
+            ],
+            "importance": 3,
+            "last_evidence_at": "2026-10-10",
+            "evidence": [
+              "我在等待已投简历的回复，目标仍是AI产品运营，暂时不会申请产品经理岗位。"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "call": 6,
+      "kind": "review",
+      "result": {
+        "approved_keys": [
+          "1"
+        ]
+      }
+    },
+    {
+      "call": 7,
+      "kind": "extract",
+      "result": {
+        "changed": true,
+        "notes": [
+          {
+            "id": "2",
+            "topic": "转行",
+            "headline": "你在从直播带货转向 AI 产品，还没离职、还没投出简历，计划10月15日前投出第一份简历。",
+            "details": [
+              "作品集正在整理中。",
+              "离职的事瞒着同事，在悄悄准备。"
+            ],
+            "importance": 3,
+            "last_evidence_at": "2026-10-06",
+            "evidence": [
+              "我还没离职，也还没投简历，正在整理作品集，计划10月15日前投第一份简历。"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "call": 8,
+      "kind": "extract",
+      "result": {
+        "changed": true,
+        "notes": [
+          {
+            "id": "3",
+            "topic": "转行",
+            "headline": "你在从直播带货转向 AI 产品运营，已投出第一份简历、正在等回复。",
+            "details": [
+              "目标岗位是 AI 产品运营，不是 AI 产品经理。",
+              "你还没离职，在瞒着同事准备。",
+              "作品集已经整理好。"
+            ],
+            "importance": 3,
+            "last_evidence_at": "2026-10-10",
+            "evidence": [
+              "我在等待已投简历的回复，目标仍是AI产品运营，暂时不会申请产品经理岗位。"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "call": 9,
+      "kind": "review",
+      "result": {
+        "approved_keys": [
+          "3"
+        ]
+      }
+    }
+  ],
+  "notes": [
+    "Prompts were tightened during evaluation to exclude vague urgency, duplicate detail facts and old/new contrast narration.",
+    "One upstream stream had no completion marker; that failed call preserved the manual note, then the same failed session was retried within the 6-call budget.",
+    "The final deduplication prompt was re-checked in three additional real calls on legacy and manually corrected synthetic cases; earlier failures are retained."
+  ]
+}

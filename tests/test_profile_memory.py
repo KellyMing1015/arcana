@@ -10,7 +10,10 @@ import tempfile
 import threading
 import unittest
 from unittest.mock import patch
-import app as website
+_bootstrap = tempfile.TemporaryDirectory(prefix="arcana-profile-test-bootstrap-", dir="/private/tmp")
+with patch.dict(os.environ, {"ARCANA_DATABASE": os.path.join(_bootstrap.name, "arcana.db")}), \
+        patch("dotenv.load_dotenv", return_value=False):
+    import app as website
 import profile_memory as memory
 
 MEMORY_ENV = {
@@ -132,7 +135,9 @@ class ProfileMemoryTests(unittest.TestCase):
         note_id = self.insert_note()
         website.initialize_database()
         with website.database_connection() as c:
-            self.assertTrue({"topic", "user_edited", "edited_at"} <= {r[1] for r in c.execute("PRAGMA table_info(profile_notes)")})
+            self.assertTrue({"topic", "user_edited", "edited_at", "headline", "details", "importance",
+                             "last_evidence_at", "edited_text", "structure_version"}
+                            <= {r[1] for r in c.execute("PRAGMA table_info(profile_notes)")})
             self.assertTrue({"revision", "extracted_revision"} <= {r[1] for r in c.execute("PRAGMA table_info(profile_memory_sessions)")})
         self.assertEqual(self.notes()[0]["id"], note_id)
 
@@ -249,7 +254,9 @@ class ProfileMemoryTests(unittest.TestCase):
         environment = dict(os.environ, ARCANA_DATABASE=self.database_path)
         script = """
 import json
-import app
+from unittest.mock import patch
+with patch('dotenv.load_dotenv', return_value=False):
+    import app
 client = app.app.test_client()
 with client.session_transaction() as session:
     session['user_id'] = 1
@@ -307,12 +314,12 @@ print(json.dumps([own.status_code, own.get_json()['notes'],
         self.process(self.output([{"topic": "转行", "text": text}]))
         self.assertEqual(self.notes()[0]["text"], text[:300])
 
-    def test_twenty_notes_with_exact_three_thousand_characters_are_accepted(self):
+    def test_twenty_notes_with_exact_six_thousand_characters_are_accepted(self):
         self.save()
-        candidates = [{"topic": f"事{i}", "text": f"{i:02d}" + "月" * 148} for i in range(20)]
+        candidates = [{"topic": f"事{i}", "text": f"{i:02d}" + "月" * 298} for i in range(20)]
         self.process(self.output(candidates))
         self.assertEqual(len(self.notes()), 20)
-        self.assertEqual(sum(len(n["text"]) for n in self.notes()), 3000)
+        self.assertEqual(sum(len(n["text"]) for n in self.notes()), 6000)
 
     def test_twenty_one_notes_fail_without_silent_whole_note_drops(self):
         self.insert_note()
@@ -323,13 +330,11 @@ print(json.dumps([own.status_code, own.get_json()['notes'],
         self.assertEqual(self.state()["status"], "failed")
         self.assertEqual(self.state()["extraction_outcome"], "limits_exceeded")
 
-    def test_total_over_three_thousand_keeps_old_notes(self):
-        self.insert_note()
-        before = self.notes()
+    def test_total_over_legacy_three_thousand_is_now_accepted(self):
         self.save()
-        self.process(self.output([{"topic": "事情", "text": str(i) + "月" * 299} for i in range(11)]))
-        self.assertEqual(self.notes(), before)
-        self.assertEqual(self.state()["extraction_outcome"], "limits_exceeded")
+        self.process(self.output([{"topic": "事情", "text": f"{i:02d}" + "月" * 298} for i in range(11)]))
+        self.assertEqual(len(self.notes()), 11)
+        self.assertEqual(sum(len(n["text"]) for n in self.notes()), 3300)
 
     def test_invalid_json_old_action_schema_and_invalid_topics_never_write(self):
         invalid = ["", "not-json", chr(96)*3 + 'json\n{"changed":false}\n' + chr(96)*3,
@@ -826,7 +831,9 @@ print(json.dumps([own.status_code, own.get_json()['notes'],
             self.assertNotIn("<", raw)
             return json.loads(raw)
         current = block("current_notes")
-        self.assertEqual(set(current[0]), {"topic", "text", "user_edited", "edited_at"})
+        self.assertTrue({"id", "topic", "text", "user_edited", "edited_at", "headline", "details",
+                         "importance", "last_evidence_at", "edited_text", "structure_version"}
+                        <= set(current[0]))
         self.assertTrue(current[0]["user_edited"])
         self.assertEqual(current[0]["edited_at"], memory._timestamp("2026-01-01 00:00:00"))
         self.assertIn("你在备考。", json.dumps(block("user_removed"), ensure_ascii=False))
@@ -954,7 +961,7 @@ print(json.dumps([own.status_code, own.get_json()['notes'],
             block = system.split("<user_notes>\n", 1)[1].split("\n</user_notes>", 1)[0]
             self.assertNotIn("<", block)
             self.assertNotIn("&", block)
-            self.assertEqual(json.loads(block)[0]["text"], attack)
+            self.assertIn(attack.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e"), block)
 
     def test_disabled_profile_does_not_read_save_or_schedule(self):
         self.insert_note()
@@ -1095,8 +1102,36 @@ print(json.dumps([own.status_code, own.get_json()['notes'],
         self.assertEqual(response.status_code, 400)
         self.assertEqual(self.notes(), before)
 
+    def test_http_structured_patch_syncs_text_and_partial_edits_keep_other_fields(self):
+        note_id = self.insert_note()
+        response = self.client.patch(f"/api/profile-notes/{note_id}", json={
+            "profile_id": "profile-ou", "headline": "你在准备 AI 产品求职。",
+            "details": ["尚未离职。", "正在整理作品。"],
+        })
+        self.assertEqual(response.status_code, 200, response.json)
+        response = self.client.patch(f"/api/profile-notes/{note_id}", json={
+            "profile_id": "profile-ou", "details": ["已正式离职。", "正在整理作品。"],
+        })
+        self.assertEqual(response.status_code, 200, response.json)
+        note = self.client.get("/api/profile-notes?profile_id=profile-ou").json["notes"][0]
+        self.assertEqual(note["headline"], "你在准备 AI 产品求职。")
+        self.assertEqual(note["details"], ["已正式离职。", "正在整理作品。"])
+        self.assertEqual(note["text"], "你在准备 AI 产品求职。\n已正式离职。\n正在整理作品。")
+        self.assertEqual(note["edited_text"], note["text"])
+        self.assertTrue(note["user_edited"])
+
+    def test_http_structured_patch_rejects_null_invalid_and_oversized_details_atomically(self):
+        note_id = self.insert_note()
+        before = self.notes()
+        for changes in ({"headline": None}, {"details": None}, {"details": "不是列表"},
+                        {"details": ["事实"] * 6}, {"headline": "字" * 298, "details": ["超出长度"]}):
+            with self.subTest(changes=changes):
+                response = self.client.patch(f"/api/profile-notes/{note_id}", json={"profile_id": "profile-ou", **changes})
+                self.assertEqual(response.status_code, 400, response.json)
+                self.assertEqual(self.notes(), before)
+
     def test_http_edit_enforces_total_budget_and_topic_length(self):
-        ids = [self.insert_note(str(i) + "月" * 299, topic="事情") for i in range(10)]
+        ids = [self.insert_note(f"{i:02d}" + "月" * 298, topic="事情") for i in range(20)]
         before = self.notes()
         response = self.client.patch(f"/api/profile-notes/{ids[0]}", json={
             "profile_id": "profile-ou", "text": "短一些", "topic": "字",
@@ -1108,7 +1143,7 @@ print(json.dumps([own.status_code, own.get_json()['notes'],
             "profile_id": "profile-ou", "text": "不能增加额外文字",
         })
         self.assertEqual(response.status_code, 400)
-        self.assertEqual(self.notes()[:10], before)
+        self.assertEqual(self.notes()[:20], before)
 
     def test_different_account_cannot_followup_saved_conversation(self):
         _, cid = self.reading()

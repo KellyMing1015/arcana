@@ -1,8 +1,8 @@
-import { DECK, cardFace, cardImageURL, cardImageSrcSet, CARD_IMAGE_SIZES } from "./cards.js?v=20261006-bubbles";
-import { getActiveProvider, getUserInfo, initializeProviderSettings } from "./settings.js?v=20261006-bubbles";
-import { getCurrentUser, initializeAuth, isLoggedIn, saveCloudReading } from "./auth.js?v=20261006-bubbles";
-import { renderHomeMarkup } from "./home-view.js?v=20261006-bubbles";
-import { READING_SESSION_KEY, confirmReadingAction, loadReadingSnapshot, reconcileConversationMessages, saveReadingSnapshot } from "./reading-session.js?v=20261006-bubbles";
+import { DECK, cardFace, cardImageURL, cardImageSrcSet, CARD_IMAGE_SIZES } from "./cards.js?v=20261010-notes";
+import { getActiveProvider, getUserInfo, initializeProviderSettings } from "./settings.js?v=20261010-notes";
+import { getCurrentUser, initializeAuth, isLoggedIn, saveCloudReading } from "./auth.js?v=20261010-notes";
+import { renderHomeMarkup } from "./home-view.js?v=20261010-notes";
+import { READING_SESSION_KEY, confirmReadingAction, loadReadingSnapshot, reconcileConversationMessages, saveReadingSnapshot } from "./reading-session.js?v=20261010-notes";
 
 const app = document.querySelector("#app");
 const state = {

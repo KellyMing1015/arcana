@@ -749,8 +749,12 @@ def manage_profile_note(user, note_id):
             if request.method == "DELETE":
                 profile_memory.delete_note(connection, user["id"], profile_id, note_id)
             else:
+                for field in ("headline", "details"):
+                    if field in payload and payload[field] is None:
+                        raise ValueError("便签摘要和详情格式不正确。")
                 profile_memory.update_note(
-                    connection, user["id"], profile_id, note_id, payload.get("text"), payload.get("topic")
+                    connection, user["id"], profile_id, note_id, payload.get("text"), payload.get("topic"),
+                    headline=payload.get("headline"), details=payload.get("details"),
                 )
         return jsonify(success=True)
     except LookupError:

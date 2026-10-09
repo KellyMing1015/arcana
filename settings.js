@@ -1,4 +1,4 @@
-import { cardImageURL, cardImageSrcSet } from "./cards.js?v=20261006-bubbles";
+import { cardImageURL, cardImageSrcSet } from "./cards.js?v=20261010-notes";
 
 const PROVIDER_STORAGE_KEY = "arcana.providers.v1";
 const INITIAL_PROVIDER_ID = "__arcana_initial_provider__";
@@ -12,7 +12,7 @@ const MAX_AVATAR_BYTES = 64 * 1024;
 const AVATAR_EDGE = 256;
 const MAX_PROFILE_NOTES = 20;
 const MAX_PROFILE_NOTE_LENGTH = 300;
-const MAX_PROFILE_NOTES_TOTAL_LENGTH = 3000;
+const MAX_PROFILE_NOTES_TOTAL_LENGTH = 6000;
 const MIN_PROFILE_NOTE_TOPIC_LENGTH = 2;
 const MAX_PROFILE_NOTE_TOPIC_LENGTH = 4;
 const ZODIACS = ["白羊座", "金牛座", "双子座", "巨蟹座", "狮子座", "处女座", "天秤座", "天蝎座", "射手座", "摩羯座", "水瓶座", "双鱼座"];
@@ -106,6 +106,7 @@ let cloudSaveChain = Promise.resolve();
 let accountSettingsSyncVersion = 0;
 let profileNotesViewVersion = 0;
 let profileNotesController = null;
+let profileNoteDetailsCleanup = null;
 let accountContext = null;
 let avatarUploadVersion = 0;
 let avatarUploadBusy = false;
@@ -182,6 +183,7 @@ function personalIcon(name, className = "personal-icon") {
 }
 
 function cancelProfileNotesView() {
+  profileNoteDetailsCleanup?.();
   profileNotesViewVersion += 1;
   profileNotesController?.abort();
   profileNotesController = null;
@@ -596,6 +598,13 @@ function profileNotesPage() {
 
 function profileNoteDate(value) {
   if (!value) return "";
+  const calendarDate = typeof value === "string" && value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (calendarDate) {
+    const [, year, month, day] = calendarDate;
+    const parsed = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+    if (parsed.toISOString().slice(0, 10) !== value) return "";
+    return `${Number(year)}年${Number(month)}月${Number(day)}日`;
+  }
   const sqliteDate = typeof value === "string" && value.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?$/);
   const normalized = sqliteDate
     ? `${sqliteDate[1]}T${sqliteDate[2]}${sqliteDate[3] ? `.${sqliteDate[3].padEnd(3, "0").slice(0, 3)}` : ""}Z`
@@ -610,7 +619,19 @@ function profileNoteTopic(note) {
 }
 
 function profileNotesTextLength(notes) {
-  return notes.reduce((total, note) => total + Array.from(note.text).length, 0);
+  return notes.reduce((total, note) => total + Array.from(profileNoteText(note)).length, 0);
+}
+
+function profileNoteHeadline(note) {
+  return typeof note.headline === "string" && note.headline.trim() ? note.headline : String(note.text || "");
+}
+
+function profileNoteDetails(note) {
+  return Array.isArray(note.details) ? note.details.filter((detail) => typeof detail === "string" && detail.trim()).slice(0, 5) : [];
+}
+
+function profileNoteText(note, headline = profileNoteHeadline(note), details = profileNoteDetails(note)) {
+  return [headline, ...details].join("\n");
 }
 
 function bindProfileNotes(overlay) {
@@ -627,6 +648,8 @@ function bindProfileNotes(overlay) {
   const capacity = panel.querySelector(".profile-notes-capacity");
   let notes = [];
   let busy = false;
+  let detailsModal = null;
+  let editingNoteId = null;
   const isCurrent = () => version === profileNotesViewVersion
     && accountId === cloudAccountId
     && panel.isConnected
@@ -648,15 +671,26 @@ function bindProfileNotes(overlay) {
     if (!response.ok) throw new Error(payload.error || "便签暂时没有保存成功，请稍后重试。");
     return payload;
   };
+  const focusNoteAction = (noteId, selector = "[data-note-edit]") => {
+    const row = [...list.querySelectorAll(".profile-note")].find((item) => item.dataset.noteId === String(noteId));
+    row?.querySelector(selector)?.focus({ preventScroll: true });
+  };
+  const canLeaveSummaryEditor = () => {
+    if (editingNoteId == null) return true;
+    setFeedback("请先保存或取消正在编辑的摘要。", true);
+    focusNoteAction(editingNoteId, "textarea");
+    return false;
+  };
   const renderNotes = () => {
     if (!isCurrent()) return;
+    editingNoteId = null;
     list.innerHTML = notes.length ? notes.map((note) => {
-      const updated = profileNoteDate(note.updated_at);
+      const confirmed = profileNoteDate(note.last_evidence_at);
       return `<article class="profile-note" data-note-id="${escapeHTML(note.id)}">
-        <div class="profile-note-heading"><strong>${escapeHTML(profileNoteTopic(note))}</strong>${note.user_edited ? '<span class="profile-note-edited">你编辑过</span>' : ""}</div>
-        <p class="profile-note-text">${escapeHTML(note.text)}</p>
-        <small class="profile-note-date">${updated ? `最后更新于 ${escapeHTML(updated)}` : ""}</small>
-        <div class="profile-note-actions"><button type="button" data-note-edit>编辑</button><button type="button" data-note-delete>删除</button></div>
+        <div class="profile-note-heading"><strong>${escapeHTML(profileNoteTopic(note))}</strong><div class="profile-note-heading-actions">${note.user_edited ? '<span class="profile-note-edited">你编辑过</span>' : ""}<button type="button" class="profile-note-details-button" data-note-details aria-haspopup="dialog" aria-label="查看${escapeHTML(profileNoteTopic(note))}便签详情">详情${personalIcon("next")}</button></div></div>
+        <p class="profile-note-text">${escapeHTML(profileNoteHeadline(note))}</p>
+        <small class="profile-note-date">${confirmed ? `最近提及于 ${escapeHTML(confirmed)}` : "尚无近期确认"}</small>
+        <div class="profile-note-actions"><button type="button" data-note-edit>编辑摘要</button><button type="button" data-note-delete>删除</button></div>
       </article>`;
     }).join("") : `<p class="profile-notes-empty">还没有便签。慢慢聊，塔罗师会记下你愿意告诉她的事情。</p>`;
     capacity.hidden = !notes.length;
@@ -665,73 +699,208 @@ function bindProfileNotes(overlay) {
     list.querySelectorAll(".profile-note").forEach((row) => {
       const note = notes.find((item) => String(item.id) === row.dataset.noteId);
       row.querySelector("[data-note-edit]").addEventListener("click", () => editNote(row, note));
-      row.querySelector("[data-note-delete]").addEventListener("click", () => mutateNote(
-        `/api/profile-notes/${encodeURIComponent(note.id)}`, "DELETE", { profile_id: profileId }, "便签已删除，以后整理时会记得你的选择。",
-      ));
+      row.querySelector("[data-note-details]").addEventListener("click", (event) => openDetails(note, event.currentTarget));
+      row.querySelector("[data-note-delete]").addEventListener("click", () => {
+        if (!canLeaveSummaryEditor()) return;
+        mutateNote(`/api/profile-notes/${encodeURIComponent(note.id)}`, "DELETE", { profile_id: profileId }, "便签已删除，以后整理时会记得你的选择。");
+      });
     });
   };
   const loadNotes = async () => {
     const payload = await request(`/api/profile-notes?profile_id=${encodeURIComponent(profileId)}`);
     if (!isCurrent()) return;
-    notes = Array.isArray(payload.notes) ? payload.notes.filter((note) => note && typeof note.text === "string" && note.id != null).slice(0, MAX_PROFILE_NOTES) : [];
+    notes = Array.isArray(payload.notes) ? payload.notes.filter((note) => note && (typeof note.headline === "string" || typeof note.text === "string") && note.id != null).slice(0, MAX_PROFILE_NOTES) : [];
     renderNotes();
   };
-  const mutateNote = async (url, method, body, message) => {
+  const setControlsBusy = (disabled) => {
+    panel.querySelectorAll("button, input, textarea").forEach((element) => { element.disabled = disabled; });
+    detailsModal?.element.querySelectorAll("[data-detail-edit], [data-detail-remove], [data-detail-save], [data-detail-cancel], textarea").forEach((element) => { element.disabled = disabled; });
+    if (!disabled && detailsModal?.element.querySelector("textarea")) {
+      detailsModal.element.querySelectorAll("[data-detail-edit], [data-detail-remove]").forEach((element) => { element.disabled = true; });
+    }
+  };
+  const mutateNote = async (url, method, body, message, detailFeedback = false, focusAfter = null) => {
     if (busy || !isCurrent()) return;
     busy = true;
-    panel.querySelectorAll("button, input, textarea").forEach((element) => { element.disabled = true; });
-    setFeedback("正在保存…");
+    setControlsBusy(true);
+    const report = (text, error = false) => {
+      if (detailFeedback && detailsModal) detailsModal.setFeedback(text, error);
+      else setFeedback(text, error);
+    };
+    report("正在保存…");
     try {
       await request(url, method, body);
       if (!isCurrent()) return;
       await loadNotes();
-      setFeedback(message);
+      if (!isCurrent()) return;
+      if (detailsModal) {
+        const updated = notes.find((note) => String(note.id) === String(detailsModal.noteId));
+        if (updated) {
+          detailsModal.render(updated);
+          detailsModal.element.querySelector("[data-detail-close]").focus();
+        }
+        else detailsModal.close();
+      }
+      report(message);
+      if (!detailsModal) focusAfter?.();
     } catch (error) {
-      if (error.name !== "AbortError") setFeedback(error.message, true);
+      if (error.name !== "AbortError") report(error.message, true);
     } finally {
       busy = false;
       if (isCurrent()) {
-        panel.querySelectorAll("button, input, textarea").forEach((element) => { element.disabled = false; });
+        setControlsBusy(false);
         clearButton.disabled = !notes.length;
       }
     }
   };
   const editNote = (row, note) => {
-    if (busy || !note || !isCurrent()) return;
+    if (busy || !note || !isCurrent() || !canLeaveSummaryEditor()) return;
+    editingNoteId = note.id;
     setFeedback();
     const topic = profileNoteTopic(note);
-    const otherNotesLength = profileNotesTextLength(notes.filter((item) => String(item.id) !== String(note.id)));
-    const availableLength = Math.max(0, Math.min(MAX_PROFILE_NOTE_LENGTH, MAX_PROFILE_NOTES_TOTAL_LENGTH - otherNotesLength));
-    row.innerHTML = `<label class="profile-note-topic-editor"><span>主题</span><input type="text" maxlength="${MAX_PROFILE_NOTE_TOPIC_LENGTH * 2}" value="${escapeHTML(topic)}" placeholder="2–4 个字"><small>2–4 个字</small></label>
-      <label class="profile-note-editor"><span class="sr-only">编辑便签正文</span><textarea rows="4" maxlength="${MAX_PROFILE_NOTE_LENGTH * 2}">${escapeHTML(note.text)}</textarea></label>
-      <div class="profile-note-edit-footer"><small><span data-note-count>${Array.from(note.text).length}</span> / ${availableLength} 字</small><div class="profile-note-actions"><button type="button" data-note-cancel>取消</button><button class="profile-note-save" type="button" data-note-save>保存</button></div></div>`;
+    const headline = profileNoteHeadline(note);
+    row.innerHTML = `<label class="profile-note-topic-editor"><span>主题</span><input type="text" value="${escapeHTML(topic)}" placeholder="2–4 个字"><small>2–4 个字</small></label>
+      <label class="profile-note-editor"><span>核心摘要</span><textarea rows="4">${escapeHTML(headline)}</textarea></label>
+      <div class="profile-note-edit-footer"><small>摘要与详情共 <span data-note-count>${Array.from(profileNoteText(note)).length}</span> / ${MAX_PROFILE_NOTE_LENGTH} 字</small><div class="profile-note-actions"><button type="button" data-note-cancel>取消</button><button class="profile-note-save" type="button" data-note-save>保存</button></div></div>`;
     const input = row.querySelector("textarea");
     const topicInput = row.querySelector(".profile-note-topic-editor input");
     const updateTextCount = (event) => {
       if (event.isComposing) return;
-      input.value = Array.from(input.value).slice(0, availableLength).join("");
-      row.querySelector("[data-note-count]").textContent = Array.from(input.value).length;
+      row.querySelector("[data-note-count]").textContent = Array.from(profileNoteText(note, input.value)).length;
     };
     input.addEventListener("input", updateTextCount);
     input.addEventListener("compositionend", updateTextCount);
-    topicInput.addEventListener("input", (event) => {
-      if (!event.isComposing) topicInput.value = Array.from(topicInput.value).slice(0, MAX_PROFILE_NOTE_TOPIC_LENGTH).join("");
-    });
-    topicInput.addEventListener("compositionend", () => { topicInput.value = Array.from(topicInput.value).slice(0, MAX_PROFILE_NOTE_TOPIC_LENGTH).join(""); });
-    row.querySelector("[data-note-cancel]").addEventListener("click", renderNotes);
+    const finishEditing = () => { renderNotes(); focusNoteAction(note.id); };
+    row.querySelector("[data-note-cancel]").addEventListener("click", finishEditing);
     row.querySelector("[data-note-save]").addEventListener("click", () => {
-      const text = Array.from(input.value.trim()).slice(0, MAX_PROFILE_NOTE_LENGTH).join("");
-      const editedTopic = Array.from(topicInput.value.trim()).slice(0, MAX_PROFILE_NOTE_TOPIC_LENGTH).join("");
-      if (Array.from(editedTopic).length < MIN_PROFILE_NOTE_TOPIC_LENGTH) { setFeedback("主题请写 2–4 个字，例如工作、感情或近况。", true); topicInput.focus(); return; }
-      if (!text) { setFeedback("便签内容不能为空。想去掉这一条，可以点删除。", true); input.focus(); return; }
-      if (otherNotesLength + Array.from(text).length > MAX_PROFILE_NOTES_TOTAL_LENGTH) { setFeedback("全部便签合计最多 3000 字，请先删减一些内容再保存。", true); input.focus(); return; }
-      if (text === note.text && editedTopic === topic) { renderNotes(); return; }
-      mutateNote(`/api/profile-notes/${encodeURIComponent(note.id)}`, "PATCH", { profile_id: profileId, topic: editedTopic, text }, "便签已更新。");
+      const editedHeadline = input.value.trim();
+      const editedTopic = topicInput.value.trim();
+      const topicLength = Array.from(editedTopic).length;
+      if (topicLength < MIN_PROFILE_NOTE_TOPIC_LENGTH || topicLength > MAX_PROFILE_NOTE_TOPIC_LENGTH) { setFeedback("主题请写 2–4 个字，例如工作、感情或近况。", true); topicInput.focus(); return; }
+      if (!editedHeadline) { setFeedback("核心摘要不能为空。想去掉这一条，可以点删除。", true); input.focus(); return; }
+      if (!validateNoteLength(note, editedHeadline, profileNoteDetails(note), setFeedback)) { input.focus(); return; }
+      if (editedHeadline === headline && editedTopic === topic) { finishEditing(); return; }
+      const changes = { profile_id: profileId };
+      if (editedTopic !== topic) changes.topic = editedTopic;
+      if (editedHeadline !== headline) changes.headline = editedHeadline;
+      mutateNote(`/api/profile-notes/${encodeURIComponent(note.id)}`, "PATCH", changes, "便签已更新。", false, () => focusNoteAction(note.id));
     });
     input.focus();
   };
+  const validateNoteLength = (note, headline, details, report) => {
+    const length = Array.from(profileNoteText(note, headline, details)).length;
+    if (length > MAX_PROFILE_NOTE_LENGTH) {
+      report("每条便签的摘要与详情合计最多 300 字，请删减后再保存。", true);
+      return false;
+    }
+    const otherLength = profileNotesTextLength(notes.filter((item) => String(item.id) !== String(note.id)));
+    if (otherLength + length > MAX_PROFILE_NOTES_TOTAL_LENGTH) {
+      report("全部便签合计最多 6000 字，请先删减一些内容再保存。", true);
+      return false;
+    }
+    return true;
+  };
+  const openDetails = (initialNote, trigger) => {
+    if (busy || !isCurrent() || detailsModal || !canLeaveSummaryEditor()) return;
+    const backdrop = document.createElement("div");
+    backdrop.className = "profile-note-details-backdrop";
+    backdrop.innerHTML = `<section class="profile-note-details-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-note-details-title" tabindex="-1">
+      <header class="profile-note-details-header"><div><small data-detail-topic></small><h2 id="profile-note-details-title">补充事实</h2></div><button type="button" class="profile-note-details-close" data-detail-close aria-label="关闭详情">${personalIcon("close")}</button></header>
+      <div class="profile-note-details-body" data-detail-list></div>
+      <p class="profile-note-details-feedback" data-detail-feedback role="status" aria-live="polite"></p>
+      <footer class="profile-note-details-footer"><button type="button" data-detail-back>${personalIcon("back")}返回便签</button></footer>
+    </section>`;
+    const background = [...overlay.children].map((element) => ({ element, inert: element.inert }));
+    background.forEach(({ element }) => { element.inert = true; });
+    overlay.append(backdrop);
+    const modalController = new AbortController();
+    const options = { signal: modalController.signal };
+    const dialog = backdrop.querySelector(".profile-note-details-dialog");
+    const detailList = backdrop.querySelector("[data-detail-list]");
+    const detailFeedback = backdrop.querySelector("[data-detail-feedback]");
+    const setDetailFeedback = (message = "", error = false) => {
+      if (!isCurrent() || !detailsModal) return;
+      detailFeedback.textContent = message;
+      detailFeedback.classList.toggle("is-error", error);
+    };
+    let closed = false;
+    const close = () => {
+      if (closed) return;
+      closed = true;
+      modalController.abort();
+      backdrop.remove();
+      background.forEach(({ element, inert }) => { element.inert = inert; });
+      detailsModal = null;
+      if (profileNoteDetailsCleanup === close) profileNoteDetailsCleanup = null;
+      const currentRow = [...list.querySelectorAll(".profile-note")].find((row) => row.dataset.noteId === String(initialNote.id));
+      const returnTarget = trigger.isConnected ? trigger : currentRow?.querySelector("[data-note-details]");
+      returnTarget?.focus({ preventScroll: true });
+    };
+    const render = (note) => {
+      if (!isCurrent() || closed) return;
+      backdrop.querySelector("[data-detail-topic]").textContent = profileNoteTopic(note);
+      const details = profileNoteDetails(note);
+      detailList.innerHTML = details.length ? details.map((detail, index) => `<article class="profile-note-detail" data-detail-index="${index}"><p>${escapeHTML(detail)}</p><div class="profile-note-actions"><button type="button" data-detail-edit aria-label="编辑第 ${index + 1} 条补充事实">编辑</button><button type="button" data-detail-remove aria-label="移除第 ${index + 1} 条补充事实">移除</button></div></article>`).join("") : '<p class="profile-note-details-empty">这条便签暂时没有补充事实。</p>';
+      detailList.querySelectorAll("[data-detail-index]").forEach((row) => {
+        const index = Number(row.dataset.detailIndex);
+        row.querySelector("[data-detail-edit]").addEventListener("click", () => {
+          if (busy || !isCurrent()) return;
+          setDetailFeedback();
+          detailList.querySelectorAll("[data-detail-edit], [data-detail-remove]").forEach((element) => { element.disabled = true; });
+          row.innerHTML = `<label class="profile-note-detail-editor"><span class="sr-only">编辑第 ${index + 1} 条补充事实</span><textarea rows="3">${escapeHTML(details[index])}</textarea></label><div class="profile-note-edit-footer"><small>摘要与详情共 <span data-detail-count>${Array.from(profileNoteText(note)).length}</span> / ${MAX_PROFILE_NOTE_LENGTH} 字</small><div class="profile-note-actions"><button type="button" data-detail-cancel>取消</button><button type="button" class="profile-note-save" data-detail-save>保存</button></div></div>`;
+          const input = row.querySelector("textarea");
+          const editedDetails = () => details.map((detail, itemIndex) => itemIndex === index ? input.value.trim() : detail);
+          const updateCount = () => { row.querySelector("[data-detail-count]").textContent = Array.from(profileNoteText(note, profileNoteHeadline(note), editedDetails())).length; };
+          input.addEventListener("input", updateCount);
+          const finishEditing = () => {
+            render(note);
+            setDetailFeedback();
+            detailList.querySelectorAll("[data-detail-index]")[index]?.querySelector("[data-detail-edit]")?.focus();
+          };
+          row.querySelector("[data-detail-cancel]").addEventListener("click", finishEditing);
+          row.querySelector("[data-detail-save]").addEventListener("click", () => {
+            if (!input.value.trim()) { setDetailFeedback("补充事实不能为空。想去掉这一条，可以点移除。", true); input.focus(); return; }
+            const nextDetails = editedDetails();
+            if (!validateNoteLength(note, profileNoteHeadline(note), nextDetails, setDetailFeedback)) { input.focus(); return; }
+            if (nextDetails[index] === details[index]) { finishEditing(); return; }
+            mutateNote(`/api/profile-notes/${encodeURIComponent(note.id)}`, "PATCH", { profile_id: profileId, details: nextDetails }, "补充事实已更新。", true);
+          });
+          input.focus();
+        });
+        row.querySelector("[data-detail-remove]").addEventListener("click", () => {
+          if (busy || !isCurrent()) return;
+          const nextDetails = details.filter((_, itemIndex) => itemIndex !== index);
+          mutateNote(`/api/profile-notes/${encodeURIComponent(note.id)}`, "PATCH", { profile_id: profileId, details: nextDetails }, "这条补充事实已移除。", true);
+        });
+      });
+    };
+    detailsModal = { element: backdrop, noteId: initialNote.id, render, close, setFeedback: setDetailFeedback };
+    profileNoteDetailsCleanup = close;
+    backdrop.querySelector("[data-detail-close]").addEventListener("click", close, options);
+    backdrop.querySelector("[data-detail-back]").addEventListener("click", close, options);
+    backdrop.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (event.target === backdrop) close();
+    }, options);
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        close();
+      } else if (event.key === "Tab") {
+        const focusable = [...backdrop.querySelectorAll("button:not(:disabled), textarea:not(:disabled)")];
+        const first = focusable[0];
+        const last = focusable.at(-1);
+        if (!first) { event.preventDefault(); dialog.focus(); }
+        else if (event.shiftKey && (document.activeElement === first || !backdrop.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && (document.activeElement === last || !backdrop.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
+      }
+    }, { ...options, capture: true });
+    render(initialNote);
+    backdrop.querySelector("[data-detail-close]").focus();
+  };
   clearButton.addEventListener("click", () => {
-    if (busy || !notes.length || !isCurrent()) return;
+    if (busy || !notes.length || !isCurrent() || !canLeaveSummaryEditor()) return;
     if (!window.confirm("清空这位用户的全部塔罗师便签？删除过的内容会被记住，除非你再次亲口提起，否则不会自动写回。")) return;
     mutateNote("/api/profile-notes", "DELETE", { profile_id: profileId }, "全部便签已清空。");
   });
@@ -1309,7 +1478,7 @@ export function initializeProviderSettings(callback = () => {}) {
     if (ownerChanged || activeSection === "home") renderSettings("", !ownerChanged);
   });
   window.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && document.querySelector("#provider-settings") && !document.querySelector("#account-overlay")) closeSettings();
+    if (event.key === "Escape" && document.querySelector("#provider-settings") && !document.querySelector("#account-overlay") && !document.querySelector(".profile-note-details-backdrop")) closeSettings();
   });
   window.addEventListener("storage", (event) => {
     if (event.key === GUEST_AVATAR_STORAGE_KEY) {
