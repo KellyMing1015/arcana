@@ -98,6 +98,7 @@ test("follow-up API receives the original request ID and successful retries adva
     state,
     getUserInfo: () => ({ enabled: false }),
     getActiveProvider: () => null,
+    readingOwner: () => "guest",
     fetch: async (url, options) => { requests.push({ url, payload: JSON.parse(options.body) }); return {}; },
     streamToOutput: async (_response, _output, onPayload) => onPayload({ done: true, rounds: 3, closed: false }),
   });

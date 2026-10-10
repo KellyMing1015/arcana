@@ -91,6 +91,7 @@ class ConversationResumeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json, {
             "conversationId": conversation_id, "rounds": 2, "closed": False, "busy": False,
+            "lastCompletedRequestId": None,
             "messages": [
                 {"role": "user", "text": "下一步怎么做？"},
                 {"role": "assistant", "text": "先从一件小事开始。"},
@@ -102,6 +103,38 @@ class ConversationResumeTests(unittest.TestCase):
         encoded = response.get_data(as_text=True)
         for hidden in ("首次解读正文", "实际抽到的牌", website.FOLLOW_UP_HINT, "隐藏总结", "test-key"):
             self.assertNotIn(hidden, encoded)
+
+    def test_status_identifies_completed_request_without_exposing_its_fingerprint(self):
+        conversation_id = self.start_reading()
+        request_id = "a" * 32
+        payload = {"conversationId": conversation_id, "message": "下一步怎么做？", "requestId": request_id}
+        with patch.object(website, "open_chat_stream", return_value=self.model_stream("完整回答")):
+            self.client.post("/api/follow-up", json=payload, buffered=True)
+        response = self.client.get(f"/api/conversation/{conversation_id}")
+        self.assertEqual(response.json["lastCompletedRequestId"], request_id)
+        self.assertEqual(response.json["rounds"], 1)
+        self.assertEqual(response.json["messages"][-1], {"role": "assistant", "text": "完整回答"})
+        self.assertNotIn("fingerprint", response.json)
+        self.assertNotIn("last_completed_request", response.json)
+        stranger = website.app.test_client()
+        denied = stranger.get(f"/api/conversation/{conversation_id}")
+        self.assertEqual(denied.status_code, 403)
+        self.assertNotIn("lastCompletedRequestId", denied.json)
+
+    def test_failed_request_does_not_replace_previous_completed_request_in_status(self):
+        conversation_id = self.start_reading()
+        payload = {"conversationId": conversation_id, "message": "下一步怎么做？", "requestId": "a" * 32}
+        with patch.object(website, "open_chat_stream", return_value=self.model_stream("第一轮完整回答")):
+            self.client.post("/api/follow-up", json=payload, buffered=True)
+        partial = json.dumps({"choices": [{"delta": {"content": "第二轮半截回答"}}]}, ensure_ascii=False)
+        with patch.object(website, "open_chat_stream", return_value=io.BytesIO(f"data: {partial}\n\n".encode("utf-8"))):
+            failed = self.client.post("/api/follow-up", json={**payload, "requestId": "b" * 32}, buffered=True)
+        self.assertIn('"error"', failed.get_data(as_text=True))
+        status = self.client.get(f"/api/conversation/{conversation_id}").json
+        self.assertEqual(status["lastCompletedRequestId"], "a" * 32)
+        self.assertEqual(status["rounds"], 1)
+        self.assertFalse(status["busy"])
+        self.assertEqual(status["messages"][-1]["text"], "第一轮完整回答")
 
     def test_image_only_message_is_restored_with_original_empty_text(self):
         conversation_id = self.start_reading()

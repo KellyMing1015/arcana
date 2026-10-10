@@ -193,7 +193,6 @@ def list_models(provider):
 def iter_chat_text(response):
     """逐个解析 OpenAI 格式 SSE，只产出 choices[0].delta.content 文本。"""
     data_lines = []
-    finished = False
 
     def parse_event(lines):
         if not lines:
@@ -236,17 +235,18 @@ def iter_chat_text(response):
             if not line:
                 content, done, terminal = parse_event(data_lines)
                 data_lines = []
-                finished = finished or terminal
-                if done:
-                    return
                 if content:
                     yield content
+                # stop is a complete response, including content in this event.
+                # Waiting for a later [DONE]/EOF can misreport a tail timeout.
+                if done or terminal:
+                    return
             elif line.startswith("data:"):
                 data_lines.append(line[5:].lstrip(" "))
         content, done, terminal = parse_event(data_lines)
         if content:
             yield content
-        if not (finished or done or terminal):
+        if not (done or terminal):
             logger.warning("LLM upstream stream ended without a completion marker")
             raise LLMError("解读连接提前结束，回应尚未完成，请重试。")
     except (URLError, OSError, TimeoutError) as error:

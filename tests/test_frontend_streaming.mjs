@@ -51,10 +51,15 @@ function setup({ reducedMotion = false } = {}) {
     frame: 0,
     callbacks: [],
     waiters: [],
+    timers: new Map(),
+    nextTimer: 0,
     async tick() {
       for (let index = 0; index < 10; index += 1) await Promise.resolve();
       this.frame += 1;
       this.time += 16;
+      for (const [id, timer] of this.timers) {
+        if (timer.at <= this.time) { this.timers.delete(id); timer.callback(); }
+      }
       const callbacks = this.callbacks.splice(0);
       for (const callback of callbacks) callback(this.time);
       const pending = this.waiters;
@@ -74,10 +79,20 @@ function setup({ reducedMotion = false } = {}) {
     performance: { now: () => clock.time },
     TextDecoder,
     DOMException,
+    TypeError,
+    AbortController,
+    Date: { now: () => clock.time },
+    setTimeout: (callback, milliseconds) => {
+      const id = ++clock.nextTimer;
+      clock.timers.set(id, { at: clock.time + milliseconds, callback });
+      return id;
+    },
+    clearTimeout: (id) => clock.timers.delete(id),
     requestAnimationFrame: (callback) => clock.callbacks.push(callback),
     state: { conversationId: "test-conversation", followUpCount: 2 },
     getActiveProvider: () => null,
     getUserInfo: () => ({ enabled: true, id: "test-profile" }),
+    readingOwner: () => "account:test",
   });
   runInContext(rendererSource + "\n" + followUpSource + "\n" + escapeSource + "\n" + conversationSource, context);
   const response = (steps) => {
@@ -366,4 +381,198 @@ test("follow-up requests read the latest profile and preserve image attachments"
   assert.equal(sent.body.message, "看这张图片");
   assert.equal(completion.rounds, 3);
   assert.equal(context.state.followUpCount, 3);
+});
+
+const recoveryId = "d77e039f-e165-407b-b521-33c203cb8acb";
+function conversationStatus(overrides = {}) {
+  return {
+    conversationId: "test-conversation", rounds: 2, busy: false, closed: false,
+    lastCompletedRequestId: "previous-request-id", messages: [], ...overrides,
+  };
+}
+const statusResponse = (snapshot) => ({ ok: true, async json() { return snapshot; } });
+const completedStatus = (text = "完整回应。", overrides = {}) => conversationStatus({
+  rounds: 3, lastCompletedRequestId: recoveryId,
+  messages: [{ role: "user", text: "继续" }, { role: "assistant", text }], ...overrides,
+});
+
+test("a network failure before content reconnects once with the frozen original request", async () => {
+  const { context, response, settle } = setup();
+  const requests = [];
+  let profileReads = 0, providerReads = 0, firstContentCalls = 0;
+  context.getUserInfo = () => { profileReads += 1; return { enabled: true, id: "original-profile" }; };
+  context.getActiveProvider = () => { providerReads += 1; return { model: "original-model", apiKey: "fake-test-key" }; };
+  context.fetch = async (url, options) => {
+    requests.push({ url, options });
+    if (url.startsWith("/api/conversation/")) return statusResponse(conversationStatus());
+    if (requests.filter((request) => request.url === "/api/follow-up").length === 1) {
+      context.getUserInfo = () => { profileReads += 1; return { enabled: false }; };
+      context.getActiveProvider = () => { providerReads += 1; return { model: "changed-model" }; };
+      throw new TypeError("network unavailable before headers");
+    }
+    return response([{ text: eventFrame({ content: "重新连上后的回应。" }) + eventFrame({ done: true, rounds: 3, closed: false }) }]);
+  };
+  const output = new Element("chat-reply-copy");
+  const completion = await settle(context.fetchFollowUp("继续", [], output, new AbortController().signal, () => { firstContentCalls += 1; }, recoveryId));
+  const posts = requests.filter((request) => request.url === "/api/follow-up");
+  assert.equal(posts.length, 2); assert.equal(posts[0].options.body, posts[1].options.body);
+  assert.equal(JSON.parse(posts[1].options.body).requestId, recoveryId);
+  assert.equal(profileReads, 1); assert.equal(providerReads, 1); assert.equal(firstContentCalls, 1);
+  assert.equal(completion.rounds, 3); assert.equal(context.state.followUpCount, 3);
+  assert.equal(context.outputText(output), "重新连上后的回应。");
+  assert.equal(requests.find((request) => request.url.startsWith("/api/conversation/")).options.cache, "no-store");
+});
+
+test("a saved answer replaces a partial broken stream without posting the question again", async () => {
+  const { context, response, settle } = setup();
+  let posts = 0, firstContentCalls = 0;
+  context.fetch = async (url) => {
+    if (url === "/api/follow-up") {
+      posts += 1;
+      return response([{ text: eventFrame({ content: "原来的半截。" }) }, { afterFrame: 6, error: new TypeError("broken network read") }]);
+    }
+    return statusResponse(completedStatus("已经保存的完整回答。"));
+  };
+  const output = new Element("chat-reply-copy");
+  const completion = await settle(context.fetchFollowUp("继续", [], output, new AbortController().signal, () => { firstContentCalls += 1; }, recoveryId));
+  assert.equal(posts, 1); assert.equal(firstContentCalls, 1);
+  assert.equal(context.outputText(output), "已经保存的完整回答。");
+  assert.equal(completion.rounds, 3); assert.equal(context.state.followUpCount, 3);
+});
+
+test("a busy server is checked until this request completes without another model request", async () => {
+  const { context, settle } = setup();
+  let posts = 0, checks = 0;
+  context.fetch = async (url) => {
+    if (url === "/api/follow-up") { posts += 1; throw new TypeError("lost request connection"); }
+    checks += 1;
+    return statusResponse(checks === 1 ? conversationStatus({ busy: true }) : completedStatus());
+  };
+  const output = new Element("chat-reply-copy");
+  await settle(context.fetchFollowUp("继续", [], output, new AbortController().signal, () => {}, recoveryId));
+  assert.equal(posts, 1); assert.equal(checks, 2);
+  assert.equal(context.outputText(output), "完整回应。"); assert.equal(context.state.followUpCount, 3);
+});
+
+test("received content prevents resending even before queued characters are visible", async () => {
+  for (const waitForBusy of [false, true]) {
+    const { context, response, settle } = setup();
+    let posts = 0, checks = 0;
+    context.fetch = async (url) => {
+      if (url === "/api/follow-up") {
+        posts += 1;
+        return response([{ text: eventFrame({ content: "已收到的正文。" }) }, { error: new TypeError("immediate reset") }]);
+      }
+      checks += 1;
+      return statusResponse(conversationStatus({ busy: waitForBusy && checks === 1 }));
+    };
+    await assert.rejects(settle(context.fetchFollowUp("继续", [], new Element("chat-reply-copy"), new AbortController().signal, () => {}, recoveryId)), /immediate reset/);
+    assert.equal(posts, 1); assert.equal(checks, waitForBusy ? 2 : 1); assert.equal(context.state.followUpCount, 2);
+  }
+});
+
+test("unknown states, other requests and unavailable status never allow an automatic post", async () => {
+  const cases = [
+    async () => { throw new TypeError("status connection failed"); },
+    ...[401, 403, 404].map((status) => async () => ({ ok: false, status })),
+    async () => statusResponse(completedStatus("相同文字的另一次回应。", { lastCompletedRequestId: "different-request" })),
+    async () => statusResponse(completedStatus("回答。", { messages: [{ role: "user", text: "不同问题" }, { role: "assistant", text: "回答。" }] })),
+    async () => statusResponse(completedStatus("回答。", { messages: [{ role: "user", text: "继续", images: ["data:image/png;base64,AQID"] }, { role: "assistant", text: "回答。" }] })),
+    async () => statusResponse(conversationStatus({ lastCompletedRequestId: undefined })),
+    async () => statusResponse(conversationStatus({ closed: true })),
+  ];
+  for (const status of cases) {
+    const { context, settle } = setup();
+    let posts = 0;
+    context.fetch = async (url) => {
+      if (url === "/api/follow-up") { posts += 1; throw new TypeError("first request reset"); }
+      return status();
+    };
+    await assert.rejects(settle(context.fetchFollowUp("继续", [], new Element("chat-reply-copy"), new AbortController().signal, () => {}, recoveryId)), /first request reset/);
+    assert.equal(posts, 1); assert.equal(context.state.followUpCount, 2);
+  }
+});
+
+test("a second disconnection stops recovery without an endless reconnect loop", async () => {
+  const { context, settle } = setup();
+  let posts = 0, checks = 0;
+  context.fetch = async (url) => {
+    if (url === "/api/follow-up") { posts += 1; throw new TypeError("persistent reset"); }
+    checks += 1; return statusResponse(conversationStatus());
+  };
+  await assert.rejects(settle(context.fetchFollowUp("继续", [], new Element("chat-reply-copy"), new AbortController().signal, () => {}, recoveryId)), /persistent reset/);
+  assert.equal(posts, 2); assert.equal(checks, 2); assert.equal(context.state.followUpCount, 2);
+});
+
+test("a continuously busy server has a bounded recovery wait", async () => {
+  const { context, settle, clock } = setup();
+  let posts = 0, checks = 0;
+  context.fetch = async (url) => {
+    if (url === "/api/follow-up") { posts += 1; throw new TypeError("busy reset"); }
+    checks += 1; return statusResponse(conversationStatus({ busy: true }));
+  };
+  await assert.rejects(settle(context.fetchFollowUp("继续", [], new Element("chat-reply-copy"), new AbortController().signal, () => {}, recoveryId)), /busy reset/);
+  assert.equal(posts, 1); assert.equal(checks, 8); assert.ok(clock.time < 20000); assert.equal(clock.timers.size, 0);
+});
+
+test("pause cancels the recovery wait and the status request", async () => {
+  for (const waitOnRequest of [false, true]) {
+    const { context, settle } = setup();
+    const controller = new AbortController();
+    let posts = 0, statusSignal;
+    context.fetch = async (url, options) => {
+      if (url === "/api/follow-up") { posts += 1; throw new TypeError("reset before pause"); }
+      statusSignal = options.signal;
+      if (!waitOnRequest) return statusResponse(conversationStatus({ busy: true }));
+      return new Promise((_resolve, reject) => options.signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true }));
+    };
+    await assert.rejects(settle(context.fetchFollowUp("继续", [], new Element("chat-reply-copy"), controller.signal, () => {}, recoveryId), (frame) => {
+      if (frame === 3) controller.abort();
+    }), (error) => error.name === "AbortError");
+    assert.equal(posts, 1); assert.equal(context.state.followUpCount, 2);
+    if (waitOnRequest) assert.equal(statusSignal.aborted, true);
+  }
+});
+
+test("changing account or reading during recovery cannot update the new state", async () => {
+  for (const change of [
+    (context) => { context.readingOwner = () => "account:another"; },
+    (context) => { context.state.readingKey = "another-reading"; context.state.followUpCount = 0; },
+    (context) => { context.state.conversationId = "another-conversation"; context.state.followUpCount = 0; },
+  ]) {
+    const { context, settle } = setup();
+    const output = new Element("chat-reply-copy");
+    let posts = 0;
+    context.fetch = async (url) => {
+      if (url === "/api/follow-up") { posts += 1; throw new TypeError("connection reset"); }
+      change(context); return statusResponse(completedStatus());
+    };
+    await assert.rejects(settle(context.fetchFollowUp("继续", [], output, new AbortController().signal, () => {}, recoveryId)), (error) => error.name === "AbortError");
+    assert.equal(posts, 1); assert.equal(context.outputText(output), ""); assert.notEqual(context.state.followUpCount, 3);
+  }
+});
+
+test("explicit model errors and local rendering TypeErrors never trigger a reconnect", async () => {
+  for (const localError of [false, true]) {
+    const { context, response, settle } = setup();
+    let requests = 0;
+    context.fetch = async () => {
+      requests += 1;
+      return response([{ text: eventFrame(localError ? { content: "正文。" } : { error: "所选模型暂不可用。" }) }]);
+    };
+    if (localError) context.renderOutputText = () => { throw new TypeError("local DOM failure"); };
+    await assert.rejects(settle(context.fetchFollowUp("继续", [], new Element("chat-reply-copy"), new AbortController().signal, () => {}, recoveryId)), localError ? /local DOM failure/ : /模型暂不可用/);
+    assert.equal(requests, 1); assert.equal(context.state.followUpCount, 2);
+  }
+});
+
+test("a cancelled fetch reported as TypeError still keeps pause semantics", async () => {
+  const { context, settle } = setup();
+  const controller = new AbortController();
+  let requests = 0;
+  context.fetch = async () => {
+    requests += 1; controller.abort(); throw new TypeError("cancelled fetch");
+  };
+  await assert.rejects(settle(context.fetchFollowUp("继续", [], new Element("chat-reply-copy"), controller.signal, () => {}, recoveryId)), (error) => error.name === "AbortError");
+  assert.equal(requests, 1); assert.equal(context.state.followUpCount, 2);
 });

@@ -1,8 +1,8 @@
-import { DECK, cardFace, cardImageURL, cardImageSrcSet, CARD_IMAGE_SIZES } from "./cards.js?v=20261010-notes";
-import { getActiveProvider, getUserInfo, initializeProviderSettings } from "./settings.js?v=20261010-notes";
-import { getCurrentUser, initializeAuth, isLoggedIn, saveCloudReading } from "./auth.js?v=20261010-notes";
-import { renderHomeMarkup } from "./home-view.js?v=20261010-notes";
-import { READING_SESSION_KEY, confirmReadingAction, loadReadingSnapshot, reconcileConversationMessages, saveReadingSnapshot } from "./reading-session.js?v=20261010-notes";
+import { DECK, cardFace, cardImageURL, cardImageSrcSet, CARD_IMAGE_SIZES } from "./cards.js?v=20261011-reconnect";
+import { getActiveProvider, getUserInfo, initializeProviderSettings } from "./settings.js?v=20261011-reconnect";
+import { getCurrentUser, initializeAuth, isLoggedIn, saveCloudReading } from "./auth.js?v=20261011-reconnect";
+import { renderHomeMarkup } from "./home-view.js?v=20261011-reconnect";
+import { READING_SESSION_KEY, confirmReadingAction, loadReadingSnapshot, reconcileConversationMessages, saveReadingSnapshot } from "./reading-session.js?v=20261011-reconnect";
 
 const app = document.querySelector("#app");
 const state = {
@@ -1335,7 +1335,13 @@ async function streamToOutput(response, output, onPayload = () => {}, onFirstCon
 
   try {
     while (true) {
-      const { value, done: streamEnded } = await reader.read();
+      let chunk;
+      try { chunk = await reader.read(); }
+      catch (error) {
+        if (error instanceof TypeError && !signal?.aborted) error.networkDisconnected = true;
+        throw error;
+      }
+      const { value, done: streamEnded } = chunk;
       if (streamEnded) break;
       buffer += decoder.decode(value, { stream: true });
       consumeBuffer();
@@ -1402,36 +1408,138 @@ async function fetchReading(output, onFirstContent, signal) {
 
 async function fetchFollowUp(message, images, output, signal, onFirstContent, requestId = undefined) {
   const provider = getActiveProvider();
+  const conversationId = state.conversationId;
+  const readingKey = state.readingKey;
+  const owner = readingOwner();
+  const roundsBefore = state.followUpCount;
+  // Keep a reconnect identical to the original request, even if settings change while waiting.
+  const payload = {
+    conversationId, message, images: [...images], userInfo: getUserInfo(),
+    ...(requestId ? { requestId } : {}), ...(provider ? { provider } : {}),
+  };
+  const body = JSON.stringify(payload);
+  const sameReading = () => state.conversationId === conversationId && state.readingKey === readingKey && readingOwner() === owner;
+  const checkCurrent = () => {
+    if (signal?.aborted || !sameReading()) throw new DOMException("回应已暂停。", "AbortError");
+  };
   let completion = null;
-  const response = await fetch("/api/follow-up", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      conversationId: state.conversationId,
-      message,
-      images,
-      userInfo: getUserInfo(),
-      ...(requestId ? { requestId } : {}),
-      ...(provider ? { provider } : {}),
-    }),
-    signal,
-  });
-  try {
-    await streamToOutput(response, output, (payload) => {
-      if (payload.done) completion = payload;
-    }, onFirstContent, signal);
-  } catch (error) {
-    // A finished server reply may still be revealing characters locally when paused.
-    // Respect its confirmed round count rather than leaving the UI behind the server.
-    if (completion) {
+  let receivedContent = false;
+  let announcedContent = false;
+  const firstContent = () => {
+    receivedContent = true;
+    if (!announcedContent) { announcedContent = true; onFirstContent(); }
+  };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      checkCurrent();
+      let response;
+      try {
+        response = await fetch("/api/follow-up", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body, signal,
+        });
+      } catch (error) {
+        if (error instanceof TypeError && !signal?.aborted) error.networkDisconnected = true;
+        throw error;
+      }
+      checkCurrent();
+      await streamToOutput(response, output, (event) => {
+        if (event.done) completion = event;
+      }, firstContent, signal);
+      checkCurrent();
+      if (!completion) throw new Error("追问连接提前结束，请再试一次。");
       state.followUpCount = completion.rounds;
-      error.streamCompletion = completion;
+      return completion;
+    } catch (error) {
+      // A finished server reply may still be revealing characters locally when paused.
+      if (completion && sameReading()) {
+        state.followUpCount = completion.rounds;
+        error.streamCompletion = completion;
+      }
+      if (signal?.aborted && error?.name !== "AbortError") {
+        const stopped = new DOMException("回应已暂停。", "AbortError");
+        if (completion && sameReading()) stopped.streamCompletion = completion;
+        throw stopped;
+      }
+      if (!error.networkDisconnected || !requestId || completion) throw error;
+      checkCurrent();
+      const recovered = await recoverFollowUpConnection({
+        conversationId, requestId, roundsBefore, message, images: payload.images,
+      }, signal, checkCurrent);
+      checkCurrent();
+      if (recovered?.status === "completed") {
+        firstContent();
+        renderOutputText(output, recovered.answer);
+        completion = { done: true, rounds: recovered.rounds, closed: recovered.closed };
+        state.followUpCount = completion.rounds;
+        return completion;
+      }
+      if (attempt === 0 && !receivedContent && recovered?.status === "uncommitted") {
+        renderOutputText(output, "");
+        continue;
+      }
+      throw error;
     }
-    throw error;
   }
-  if (!completion) throw new Error("追问连接提前结束，请再试一次。");
-  state.followUpCount = completion.rounds;
-  return completion;
+}
+
+function classifyFollowUpRecovery(snapshot, expected) {
+  if (!snapshot || snapshot.conversationId !== expected.conversationId
+      || !Number.isInteger(snapshot.rounds) || snapshot.rounds < 0 || snapshot.rounds > 8
+      || typeof snapshot.busy !== "boolean" || typeof snapshot.closed !== "boolean"
+      || !Array.isArray(snapshot.messages)
+      || !(snapshot.lastCompletedRequestId === null || typeof snapshot.lastCompletedRequestId === "string")) return null;
+  if (snapshot.lastCompletedRequestId === expected.requestId && snapshot.rounds === expected.roundsBefore + 1) {
+    const user = snapshot.messages.at(-2), answer = snapshot.messages.at(-1);
+    if (user?.role !== "user" || user.text !== expected.message
+        || JSON.stringify(user.images || []) !== JSON.stringify(expected.images)
+        || answer?.role !== "assistant" || typeof answer.text !== "string" || !answer.text.trim()) return null;
+    return { status: "completed", answer: answer.text, rounds: snapshot.rounds, closed: snapshot.closed };
+  }
+  // A newer, different turn must never be mistaken for this request or resent over it.
+  if (snapshot.rounds !== expected.roundsBefore || snapshot.lastCompletedRequestId === expected.requestId || snapshot.closed) return null;
+  return { status: snapshot.busy ? "busy" : "uncommitted" };
+}
+
+async function recoverFollowUpConnection(expected, signal, checkCurrent) {
+  const deadline = Date.now() + 20000;
+  for (let attempt = 0; attempt < 8 && Date.now() < deadline; attempt += 1) {
+    checkCurrent();
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal?.addEventListener("abort", abort, { once: true });
+    const timeout = setTimeout(abort, Math.min(5000, deadline - Date.now()));
+    let status;
+    try {
+      const response = await fetch(`/api/conversation/${encodeURIComponent(expected.conversationId)}`, {
+        signal: controller.signal, cache: "no-store",
+      });
+      checkCurrent();
+      if (!response.ok) return null;
+      status = classifyFollowUpRecovery(await response.json(), expected);
+      checkCurrent();
+    } catch {
+      checkCurrent();
+      return null;
+    } finally {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", abort);
+    }
+    if (status?.status !== "busy") return status;
+    if (attempt < 7 && Date.now() < deadline) await waitForFollowUpRecovery(Math.min(2000, deadline - Date.now()), signal);
+  }
+  return null;
+}
+
+function waitForFollowUpRecovery(milliseconds, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(new DOMException("回应已暂停。", "AbortError")); return; }
+    const abort = () => {
+      clearTimeout(timeout);
+      reject(new DOMException("回应已暂停。", "AbortError"));
+    };
+    const timeout = setTimeout(() => { signal?.removeEventListener("abort", abort); resolve(); }, milliseconds);
+    signal?.addEventListener("abort", abort, { once: true });
+  });
 }
 
 function safeLocalImage(value) {

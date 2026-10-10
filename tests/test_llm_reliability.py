@@ -3,6 +3,7 @@
 import io
 import json
 import unittest
+from threading import Event
 from unittest.mock import patch
 from urllib.error import HTTPError
 
@@ -59,6 +60,43 @@ class RelayReliabilityTests(unittest.TestCase):
         response = io.BytesIO(event("完整回复") + event(finish_reason="stop"))
         self.assertEqual(list(llm.iter_chat_text(response)), ["完整回复"])
 
+    def test_stop_finishes_before_a_trailing_transport_timeout(self):
+        class TimedOutTail:
+            tail_read = False
+
+            def __iter__(self):
+                yield from io.BytesIO(event("完整回复") + event(finish_reason="stop"))
+                self.tail_read = True
+                raise TimeoutError("transport lingered after its completion event")
+
+        response = TimedOutTail()
+        self.assertEqual(list(llm.iter_chat_text(response)), ["完整回复"])
+        self.assertFalse(response.tail_read)
+
+    def test_stop_does_not_wait_for_the_providers_next_read(self):
+        class BlockingTail:
+            tail_read = False
+
+            def __iter__(self):
+                yield from io.BytesIO(event("最后一句", finish_reason="stop"))
+                self.tail_read = True
+                # Model a provider keeping the connection open after its stop event.
+                Event().wait(0.05)
+                raise TimeoutError("the provider never sent another frame")
+
+        response = BlockingTail()
+        self.assertEqual(list(llm.iter_chat_text(response)), ["最后一句"])
+        self.assertFalse(response.tail_read)
+
+    def test_stop_event_keeps_its_content_and_ignores_trailing_usage_frame(self):
+        response = io.BytesIO(event("前半句") + event("最后一句", finish_reason="stop")
+                              + b'data: {"choices":[],"usage":{"completion_tokens":10}}\n\n')
+        self.assertEqual(list(llm.iter_chat_text(response)), ["前半句", "最后一句"])
+
+    def test_stop_with_content_without_a_trailing_blank_line_is_supported(self):
+        response = io.BytesIO(event("完整回复", finish_reason="stop").rstrip(b"\n"))
+        self.assertEqual(list(llm.iter_chat_text(response)), ["完整回复"])
+
     def test_done_marker_without_trailing_blank_line_is_supported(self):
         response = io.BytesIO(event("完整回复") + b"data: [DONE]")
         self.assertEqual(list(llm.iter_chat_text(response)), ["完整回复"])
@@ -71,9 +109,12 @@ class RelayReliabilityTests(unittest.TestCase):
                 response = io.BytesIO(event("只输出了一部分") + event(finish_reason=reason) + b"data: [DONE]\n\n")
                 with self.assertRaisesRegex(llm.LLMError, message):
                     list(llm.iter_chat_text(response))
+                same_event = io.BytesIO(event("只输出了一部分", finish_reason=reason) + b"data: [DONE]\n\n")
+                with self.assertRaisesRegex(llm.LLMError, message):
+                    list(llm.iter_chat_text(same_event))
 
     def test_malformed_choices_fail_with_a_readable_error(self):
-        response = io.BytesIO(b'data: {"choices":[null]}\n\n')
+        response = io.BytesIO(b'data: {"choices":[null]}\n\n' + event(finish_reason="stop"))
         with self.assertRaisesRegex(llm.LLMError, "无法识别"):
             list(llm.iter_chat_text(response))
 

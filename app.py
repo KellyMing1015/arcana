@@ -1861,6 +1861,7 @@ def get_conversation(conversation_id):
             rounds=conversation["rounds"],
             closed=bool(conversation.get("closed")) or conversation["rounds"] >= MAX_FOLLOW_UPS,
             busy=bool(conversation.get("busy")),
+            lastCompletedRequestId=(conversation.get("last_completed_request") or {}).get("request_id"),
             messages=conversation_visible_messages(conversation),
         )
     response.headers["Cache-Control"] = "no-store"
